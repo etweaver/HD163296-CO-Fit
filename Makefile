@@ -20,7 +20,7 @@ clean :
 	rm -rf build/*.o
 	rm -rf build/distribute.capnp.h
 	rm -rf build/distribute.capnp.c++
-	rmdir build
+	rm -f build
 
 modelEval : build/modelEval.o build/geometry.o build/diskPhysics.o build/HTTPRequests.o build/ParameterSet.o build/distribute.capnp.o
 	$(CXX) -o modelEval $^ $(LDFLAGS)
