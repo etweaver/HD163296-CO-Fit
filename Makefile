@@ -31,33 +31,33 @@ driver: build/driver.o build/ParameterSet.o  build/distribute.capnp.o
 test : build/modelTest.o build/geometry.o build/diskPhysics.o
 	$(CXX) -o modelTest $^ $(LDFLAGS)
 
-build/modelEval.o : build modelEval.cpp geometry.h grid.h HTTPRequests.h image.h worker.h build/distribute.capnp.h
+build/modelEval.o : modelEval.cpp geometry.h grid.h HTTPRequests.h image.h worker.h build/distribute.capnp.h | build
 	$(CXX) $(CXXFLAGS) modelEval.cpp -c -o build/modelEval.o
-build/modelTest.o : build modelEval.cpp geometry.h grid.h image.h
+build/modelTest.o : modelEval.cpp geometry.h grid.h image.h | build
 	$(CXX) $(CXXFLAGS) modelTest.cpp -c -o build/modelTest.o
-build/sampler.o : build sampler.cpp geometry.h grid.h image.h mcmc.h
+build/sampler.o : sampler.cpp geometry.h grid.h image.h mcmc.h | build
 	$(CXX) $(CXXFLAGS) sampler.cpp -c -o build/sampler.o
-build/geometry.o : build geometry.cpp diskPhysics.h geometry.h
+build/geometry.o : geometry.cpp diskPhysics.h geometry.h | build
 	$(CXX) $(CXXFLAGS) $(INCFLAGS) geometry.cpp -c -o build/geometry.o
-build/image.o : build image.cpp image.h diskPhysics.h
+build/image.o : image.cpp image.h diskPhysics.h | build
 	$(CXX) $(CXXFLAGS) $(INCFLAGS) image.cpp -c -o build/image.o
-build/diskPhysics.o : build diskPhysics.cpp diskPhysics.h
+build/diskPhysics.o : diskPhysics.cpp diskPhysics.h | build
 	$(CXX) $(CXXFLAGS) $(INCFLAGS) diskPhysics.cpp -c -o build/diskPhysics.o
-build/ParameterSet.o : build ParameterSet.cpp ParameterSet.h
+build/ParameterSet.o : ParameterSet.cpp ParameterSet.h | build
 	$(CXX) $(CXXFLAGS) $(INCFLAGS) ParameterSet.cpp -c -o build/ParameterSet.o
-build/distribute.capnp.h : build distribute.capnp Makefile
+build/distribute.capnp.h : distribute.capnp Makefile | build
 	capnp compile -oc++ distribute.capnp
 	mv distribute.capnp.h build/
-build/HTTPRequests.o : build HTTPRequests.cpp HTTPRequests.h
+build/HTTPRequests.o : HTTPRequests.cpp HTTPRequests.h | build
 	$(CXX) $(CXXFLAGS) $(INCFLAGS) HTTPRequests.cpp -c -o build/HTTPRequests.o
 
-build/distribute.capnp.c++ : build build/distribute.capnp.h Makefile
+build/distribute.capnp.c++ : build/distribute.capnp.h Makefile | build
 	mv distribute.capnp.c++ build/
 
-build/distribute.capnp.o : build build/distribute.capnp.c++ Makefile
+build/distribute.capnp.o : build/distribute.capnp.c++ Makefile | build
 	$(CXX) $(CXXFLAGS) -c build/distribute.capnp.c++ -o build/distribute.capnp.o
 
-build/driver.o : build driver.cpp driver.h build/distribute.capnp.h ParameterSet.h radmcInterface.h
+build/driver.o : driver.cpp driver.h build/distribute.capnp.h ParameterSet.h radmcInterface.h | build
 	$(CXX) $(CXXFLAGS) -c driver.cpp -o build/driver.o
 
 build :
