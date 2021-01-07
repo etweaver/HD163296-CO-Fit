@@ -203,15 +203,15 @@ public:
 
 	//standard constructor, but with istreams for the gridfile and temperature file
 	grid(double rmin,double rmax,double tmin,double tmax,double pmin, double pmax,
-                 double starMass, bool readDensityFromFile, bool readTempFromFile, std::istream& binFile, std::istream& temperatureFile,
-                 std::string densityFile, std::string opacityFile, density dens, bool freezeout, double turb):
-        rmin(rmin), rmax(rmax), tmin(tmin), tmax(tmax), pmin(pmin),pmax(pmax),
-        starMass(starMass), readDensityFromFile(false), readTempFromFile(readTempFromFile),
-        densityFile(densityFile), opacityFile(opacityFile), dens(dens), dustDens(dens), dust_opac(opacityFile),
-        freezeout(freezeout), turbulence(turb){
-                surf=makeInterpSurf(binFile, temperatureFile);
-                temperature=temp(!readTempFromFile, surf);
-        }
+		double starMass, bool readDensityFromFile, bool readTempFromFile, std::istream& binFile, std::istream& temperatureFile,
+		std::string densityFile, std::string opacityFile, density dens, bool freezeout, double turb):
+		rmin(rmin), rmax(rmax), tmin(tmin), tmax(tmax), pmin(pmin),pmax(pmax),
+		starMass(starMass), readDensityFromFile(false), readTempFromFile(readTempFromFile),
+		densityFile(densityFile), opacityFile(opacityFile), dens(dens), dustDens(dens), dust_opac(opacityFile),
+		freezeout(freezeout), turbulence(turb){
+			surf=makeInterpSurf(binFile, temperatureFile);
+			temperature=temp(!readTempFromFile, surf);
+		}
 		
 	//copy
 	//Currently real broken

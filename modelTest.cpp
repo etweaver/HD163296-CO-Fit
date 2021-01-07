@@ -18,6 +18,7 @@
 #include "grid.h"
 #include "image.h"
 #include "ParameterSet.h"
+#include "radmcInterface.h"
 
 struct newDensity {
 	double Sigma0;
@@ -183,8 +184,113 @@ int main(int argc, char* argv[]){
 			obs.data[4][i][j]=obsPart5.data[0][obs.vpix-i-1][j];
 		}
 	}
+	std::cout << "data read in" << std::endl;
 	
+	//read in the fit parameters from the command line
+	if(argc != 11){
+		std::cout << "error: arguments" << std::endl;
+		exit(1);
+	}
+	double logSigGas, rcgas, Pgas, Sgas, h0gas, logSigDust, rcdust, Pdust, h0dust, Sdust; //don't need mStar and dF here
+	double mStar=2.05; double deltaF=-37000; //hardcode these for now
+	logSigGas=strtod(argv[1],NULL);
+	rcgas=strtod(argv[2],NULL);
+	Pgas=strtod(argv[3],NULL);
+	h0gas=strtod(argv[4],NULL);
+	Sgas=strtod(argv[5],NULL);
+	logSigDust=strtod(argv[6],NULL);
+	rcdust=strtod(argv[7],NULL);
+	Pdust=strtod(argv[8],NULL);
+	h0dust=strtod(argv[9],NULL);
+	Sdust=strtod(argv[10],NULL);
 	
+	//the radmc interface assumes it's getting a whole ensemble to average.
+	//here the "ensemble" is one point, so it looks a little dumb but works
+	std::vector<std::vector<double> > ensemble;
+	std::vector<double> ensemblePoint;
+	ensemblePoint.push_back(logSigGas);
+	ensemblePoint.push_back(rcgas*AU);
+	ensemblePoint.push_back(Pgas);
+	ensemblePoint.push_back(Sgas);
+	ensemblePoint.push_back(h0gas*AU);
+	ensemblePoint.push_back(mStar*mSun);
+	ensemblePoint.push_back(logSigDust);
+	ensemblePoint.push_back(rcdust*AU);
+	ensemblePoint.push_back(Pdust);
+	ensemblePoint.push_back(Sdust);
+	ensemblePoint.push_back(h0dust*AU);
+	ensemble.push_back(ensemblePoint);
+	
+	densityEnsemble radmcEnsemble(ensemble);
+	radmcEnsemble.outputToRADMC(110,100);
+	system("./calcTemp.sh");
+	std::cout << "temperature model generated" << std::endl;
+	
+	//now to actually make the model image
+	ThreadPool pool(50);
+	double deltaV[5]={-3.2,-1.6,0,1.6,3.2};
+	
+	double inc, PA, p1, p2, p3, d1, d2, d3, w1, w2, w3;
+	inc=-0.768; PA=2.307;
+	p1=48.23*AU; p2=85.37*AU; p3=98.89*AU;
+	d1=0.99; d2=0.96; d3=-0.904916;
+	w1=8.5*AU; w2=5.67*AU; w3=3.246*AU;
+	
+	vect pos(10000*AU*cos(inc),0,10000*AU*sin(inc));
+	newDensity gasdens(pow(10, logSigGas), rcgas*AU, h0gas*AU, Pgas, Sgas, 0, 0, 0,0, 0, 0, 0, 0, 0, 0, 0, 0);
+	newDensity dustDens(pow(10,logSigDust),rcdust*AU,h0dust*AU,Pdust,Sdust,p1,p2,p3,0,d1,d2,d3,0,w1,w2,w3,0);
+	std::ifstream gridStream("radmc/amr_grid.inp");
+	std::ifstream temperatureStream("radmc/dust_temperature_phi0.ascii");
+	grid<newDensity> g(0.01*AU,1000*AU,60*(pi/180),120*(pi/180),0, 6.28318530717,mStar*mSun, false, true, gridStream,
+		temperatureStream, "radmc/dust_density.inp","radmc/dustopac.txt", gasdens, true, 0);
+	g.dustDens=dustDens; //dust structure
+	g.dens=gasdens;
+	g.freezeout=true;
+	image im(500, 500, 1312.990851*AU, 1312.990851*AU , origin, origin, 2.30538e+11, 4,{0,0,0,0}, 101*3.0857e+18);
+	im.position=pos;
+	
+	beam bm(obs,(0.104/(2*log(2))), (0.095/(2*log(2))),-80.216*pi/180);
+	
+	unsigned int fIndex=3;
+	
+	unsigned int nFreqs=1;
+	std::vector<double> globalFrequencies;
+	double frequency=im.centfreq+(deltaV[fIndex]*1e5/c*im.centfreq);
+    
+	std::vector<double> frequencies;
+	double startfreq=frequency;
+	double freqStep=1e5;
+	//double freqStep=0;
+	frequencies.push_back(startfreq-(freqStep*0.875));
+	//frequencies.push_back(startfreq-(freqStep*0.625));
+	frequencies.push_back(startfreq-(freqStep*0.375));
+	//frequencies.push_back(startfreq-(freqStep*0.125));
+	//frequencies.push_back(startfreq+(freqStep*0.125));
+	frequencies.push_back(startfreq+(freqStep*0.375));
+	//frequencies.push_back(startfreq+(freqStep*0.625));
+	frequencies.push_back(startfreq+(freqStep*0.875));
+	std::cout.precision(10);
+	for(int i=0;i<frequencies.size();i++){ 
+		frequencies[i]+=deltaF;
+		//std::cout << frequencies[i] << std::endl;
+	}
+	im.frequencies=frequencies;
+	im.freqbins=frequencies.size();
+	
+	im.propagate(g,PA,grid<newDensity>::normal, pool);
+
+	std::vector<double> finalfreq; finalfreq.push_back(im.centfreq);
+	image finalIm(im.vpix, im.hpix, im.width, im.height , origin, origin, im.centfreq, 1, finalfreq, im.distance);
+	for(int i=0; i<im.hpix; i++){
+		for(int j=0; j<im.vpix; j++){
+			finalIm.data[0][j][i]=0;
+			for(int f=0; f<frequencies.size(); f++){
+				finalIm.data[0][j][i]+=im.data[f][j][i]/frequencies.size();
+			}
+		}
+	}
+	double chi2=chiSquaredStupid(finalIm,obs,bm,fIndex,0,0);
+	std::cout << "chi squared: " << chi2 << std::endl;
 	
 	return 0;
 }

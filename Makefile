@@ -27,8 +27,13 @@ modelEval : build/modelEval.o build/geometry.o build/diskPhysics.o build/HTTPReq
 driver: build/driver.o build/ParameterSet.o  build/distribute.capnp.o
 	$(CXX) -o driver $^ $(LDFLAGS)
 
+test : build/modelTest.o build/geometry.o build/diskPhysics.o
+	$(CXX) -o modelTest $^ $(LDFLAGS)
+
 build/modelEval.o : modelEval.cpp geometry.h grid.h HTTPRequests.h image.h worker.h build/distribute.capnp.h
 	$(CXX) $(CXXFLAGS) modelEval.cpp -c -o build/modelEval.o
+build/modelTest.o : modelEval.cpp geometry.h grid.h image.h
+	$(CXX) $(CXXFLAGS) modelTest.cpp -c -o build/modelTest.o
 build/sampler.o : sampler.cpp geometry.h grid.h image.h mcmc.h
 	$(CXX) $(CXXFLAGS) sampler.cpp -c -o build/sampler.o
 build/geometry.o : geometry.cpp diskPhysics.h geometry.h

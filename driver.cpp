@@ -7,6 +7,7 @@
 #include <condition_variable>
 
 #include "radmcInterface.h"
+#include "diskPhysics.h"
 
 struct moveProposal{
 	std::vector<double> coordinates;
@@ -154,18 +155,18 @@ public:
 		}else{
 			for(int i=0;i<ensembleSize;i++){
 				ensembleMember member(nFrequencies);
-				member.coords.push_back(randInRange(-1.25,-1.15,rng));//logSig0
-				member.coords.push_back(randInRange(375,385,rng));//rc
-				member.coords.push_back(randInRange(0.5,0.55,rng));//P
-				member.coords.push_back(randInRange(130,140,rng));//h0gas
-				member.coords.push_back(randInRange(1.0,1.1,rng));//Sgas
-				member.coords.push_back(randInRange(2.17,2.19,rng));//mStar
-				member.coords.push_back(randInRange(3.8e4,4e4,rng));//deltaF*/
-				member.coords.push_back(randInRange(-0.2,0,rng));//logSig0dust
-				member.coords.push_back(randInRange(80,82,rng));//rcdust
-				member.coords.push_back(randInRange(0.3,0.4,rng));//Pdust
-				member.coords.push_back(randInRange(1.5,2,rng));//h0dust
-				member.coords.push_back(randInRange(0.1,0.5,rng));//Sdust
+				member.coords.push_back(randInRange(0.45,0.55,rng));//logSig0
+				member.coords.push_back(randInRange(90,100,rng));//rc
+				member.coords.push_back(randInRange(1.05,1.15,rng));//P
+				member.coords.push_back(randInRange(13,17,rng));//h0gas
+				member.coords.push_back(randInRange(0.65,0.75,rng));//Sgas
+				member.coords.push_back(randInRange(2.05,2.15,rng));//mStar
+				member.coords.push_back(randInRange(-3.8e4,-3.6e4,rng));//deltaF*/
+				member.coords.push_back(randInRange(0.65,0.75,rng));//logSig0dust
+				member.coords.push_back(randInRange(80,90,rng));//rcdust
+				member.coords.push_back(randInRange(0.2,0.3,rng));//Pdust
+				member.coords.push_back(randInRange(8,9,rng));//h0dust
+				member.coords.push_back(randInRange(0.9,1,rng));//Sdust
 				ensemble.push_back(member);
 			}
 		}
@@ -285,12 +286,17 @@ protected:
 		std::vector<std::vector<double> > subEnsemble;
 		for(int i=0;i<ensembleSize;i++){
 			std::vector<double> coords;
+			coords.push_back(ensemble[i].coords[0]);
+			coords.push_back(ensemble[i].coords[1]);
+			coords.push_back(ensemble[i].coords[2]);
+			coords.push_back(ensemble[i].coords[4]);
+			coords.push_back(ensemble[i].coords[3]);
+			coords.push_back(ensemble[i].coords[5]);
 			coords.push_back(ensemble[i].coords[7]);
 			coords.push_back(ensemble[i].coords[8]);
 			coords.push_back(ensemble[i].coords[9]);
 			coords.push_back(ensemble[i].coords[11]);
 			coords.push_back(ensemble[i].coords[10]);
-			coords.push_back(ensemble[i].coords[5]);
 			//coords.push_back(-2.108641);
 			//coords.push_back(100*AU);
 			//coords.push_back(-0.1);
@@ -300,7 +306,7 @@ protected:
 			subEnsemble.push_back(coords);
 		}
 		densityEnsemble radmcEnsemble(subEnsemble);
-		radmcEnsemble.outputToRADMC(400,200);
+		radmcEnsemble.outputToRADMC(110,100);
 		
 		//radmc is all fortran, so there isn't much of a way to run it from here besides system()
 		system("./calcTemp.sh");
@@ -360,22 +366,22 @@ int main(int argc, char* argv[]){
 	params.addParameter("logSigma0");
 	params.setParameterLowerLimit("logSigma0",-3); params.setParameterUpperLimit("logSigma0",2);
 	params.addParameter("rc"); //units of au
-	params.setParameterLowerLimit("rc",50); params.setParameterUpperLimit("rc",500);
+	params.setParameterLowerLimit("rc",40); params.setParameterUpperLimit("rc",500);
 	params.addParameter("P"); //unitless
 	params.setParameterLowerLimit("P",-1); params.setParameterUpperLimit("P",1.999);
 	params.addParameter("h0gas"); //au
-	params.setParameterLowerLimit("h0gas",25); params.setParameterUpperLimit("h0gas",500);
+	params.setParameterLowerLimit("h0gas",0.1); params.setParameterUpperLimit("h0gas",500);
 	params.addParameter("Sgas"); //unitless
 	params.setParameterLowerLimit("Sgas",-1); params.setParameterUpperLimit("Sgas",2);
 	params.addParameter("mStar"); //mSun
-	params.setParameterLowerLimit("mStar",2.05); params.setParameterUpperLimit("mStar",2.35);
+	params.setParameterLowerLimit("mStar",2.00); params.setParameterUpperLimit("mStar",2.35);
 	params.addParameter("deltaF"); //Hz
 	params.setParameterLowerLimit("deltaF",-1e7); params.setParameterUpperLimit("deltaF",1e7);
 	//dust structure parameters
 	params.addParameter("logSigma0dust");
 	params.setParameterLowerLimit("logSigma0dust",-3); params.setParameterUpperLimit("logSigma0dust",2);
 	params.addParameter("rcdust"); //units of au
-	params.setParameterLowerLimit("rcdust",50); params.setParameterUpperLimit("rcdust",500);
+	params.setParameterLowerLimit("rcdust",40); params.setParameterUpperLimit("rcdust",500);
 	params.addParameter("Pdust"); //unitless
 	params.setParameterLowerLimit("Pdust",-1); params.setParameterUpperLimit("Pdust",1.999);
 	params.addParameter("h0dust"); //au
@@ -405,7 +411,7 @@ int main(int argc, char* argv[]){
 	params.addParameter("dy"); //pixels
 	params.setParameterLowerLimit("dy",-25); params.setParameterUpperLimit("dy",25);*/
 	
-	modelingServer<std::mt19937,stretchMove> testServer(1200,5,40,params,137,true);
+	modelingServer<std::mt19937,stretchMove> testServer(100,5,40,params,137,true);
 	testServer.setWatchdogInterval(std::chrono::seconds(2));
 	testServer.setMaxWorkerSilenceTime(std::chrono::seconds(4));
 	testServer.run();

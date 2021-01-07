@@ -350,13 +350,13 @@ protected:
 		vect pos(10000*AU*cos(inc),0,10000*AU*sin(inc));
 		
 		//we're almost ready to do the imaging, but we need to get the temperature file
-                //from the server
-                httpRequests::Response resp=httpRequests::httpGet(tempFileURL);
-                if(resp.status!=200){
-                        std::cout << "Error: could not retrieve temperature file" << std::endl;
+		//from the server
+		httpRequests::Response resp=httpRequests::httpGet(tempFileURL);
+		if(resp.status!=200){
+			std::cout << "Error: could not retrieve temperature file" << std::endl;
 			std::cout << resp.status << std::endl;
-                        exit(1);
-                }
+			exit(1);
+		}
 		std::istringstream temperatureStream(resp.body);
 		std::ifstream gridStream("radmc/amr_grid.inp");
 	
