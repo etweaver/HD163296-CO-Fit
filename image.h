@@ -39,21 +39,26 @@ public:
 	unsigned int vpix, hpix; //vertical and horizontal pixel numbers
 	double width, height; //centimeters
 	vect position, target; //position and target of image normal
-	double centfreq;
-	unsigned int freqbins;
 	std::vector<double> frequencies;
 	double rayTraceTime;
 	marray<double,3> data;
 	double RA, DEC;
+	double inc, PA; //the position angle
 	double distance; //the physical distance the object is away, for determining the pixel size. Not necessarily the distance away the camera is.
 	
 	//the usual constructors/destructors
-	image():vpix(0), hpix(0), width(0), height(0), position(), target(), centfreq(0),freqbins(0), distance(0), frequencies(), data() {}
-	image(unsigned int vpix, unsigned int hpix,double w, double h , vect p, vect t, double centfreq, unsigned int freqbins, std::vector<double> frequencies, double distance):
-		vpix(vpix),hpix(hpix),width(w),height(h), position(p), target(t), centfreq(centfreq), freqbins(freqbins), distance(distance), frequencies(frequencies), data({freqbins,hpix,vpix}){}
+	image():vpix(0), hpix(0), width(0), height(0), position(), target(), distance(0), inc() , PA(0), frequencies(), data() {}
+	image(unsigned int vpix, unsigned int hpix,double w, double h, std::vector<double> frequencies, double inc, double PA, double distance):
+		vpix(vpix),hpix(hpix),width(w),height(h), inc(inc), PA(PA), distance(distance), frequencies(frequencies), data({frequencies.size(),hpix,vpix}){
+			target=origin; //in six years I've never yet failed to put the disk at the origin, so it's now the default
+			//to position the image, we move put it at the correct angle based on the inclination,
+			//and just move it a large distance away. The actual distance doesn't matter (the rays are parallel), 
+			//as long as it's safely outside the disk
+			target=vect(100000*AU*cos(inc),0,100000*AU*sin(inc));
+		}
 	image(const image& other):
 		vpix(other.vpix),hpix(other.hpix), width(other.width),height(other.height),position(other.position),target(other.target),
-		centfreq(other.centfreq), freqbins(other.freqbins), distance(other.distance), frequencies(other.frequencies), data(other.data){}
+		inc(other.inc), PA(other.PA), distance(other.distance), frequencies(other.frequencies), data(other.data){}
 	//~image(){ delete[] data; }
 	image& operator=(const image& other){
 		if(this!=&other){
@@ -63,8 +68,8 @@ public:
 			height=other.height;
 			position=other.position;
 			target=other.target;
-			centfreq=other.centfreq;
-			freqbins=other.freqbins;
+			inc=other.inc;
+			PA=other.PA;
 			distance=other.distance;
 			RA=other.RA;
 			DEC=other.DEC;
@@ -78,7 +83,7 @@ public:
 	//for now, we assume parallel rays, so the center of each pixel casts a
 	//ray through the disk
 	template<class density>
-	void propagate(const grid<density>& g, const double rotAngle, typename grid<density>::prop_type type, ThreadPool& pool){
+	void propagate(const grid<density>& g, typename grid<density>::prop_type type, ThreadPool& pool){
 		//Galario setup stuff
 		//for Marco's FFT system, we need the center of the image to be at pixel hpix/2,vpix/2
 		//I'm not quite convinced this is necessary, given that the ray tracing will probably 
@@ -107,8 +112,8 @@ public:
 		/*std::vector<double> frequencies;
 		double freq=centfreq;
 		freq-=freqrange/2;
-		for(int i=0;i<freqbins;i++){
-			freq+=(freqrange/freqbins);
+		for(int i=0;i<frequencies.size();i++){
+			freq+=(freqrange/frequencies.size());
 			frequencies.push_back(freq);
 			//std::cout << freq << std::endl;
 		}
@@ -187,7 +192,9 @@ public:
 					double ypos=(j+0.5)*(heightSpecial/vpixSpecial)-heightSpecial/2.0;
 					vect displacement(xpos,ypos,0);
 					//this is the euler angle stuff. Don't touch it
-					displacement.rotateZ(rotAngle);
+					//the rotation angle is the opposite of the position angle of the disk,
+					//because we rotate the image, not the disk
+					displacement.rotateZ(-PA);
 					displacement.rotateY(theta);
 					displacement.rotateZ(phi);
 					vect radial(0,0,radDist);
@@ -228,12 +235,12 @@ public:
 			r.get();
 		
 		//std::cout << "starting averaging" << std::endl;
-		/*int centfreqnum=freqbins/2;
-		double binwidth=freqrange/freqbins;
+		/*int centfreqnum=frequencies.size()/2;
+		double binwidth=freqrange/frequencies.size();
 		//optional spectral averaging.
 		//TODO: Make this an adjustable parameter
 		int numToStack=10; //Average by stacking every n images
-		unsigned int numFrequenciesAveraged=ceil((double) freqbins/numToStack);
+		unsigned int numFrequenciesAveraged=ceil((double) frequencies.size()/numToStack);
 		marray<double,3> longdataAveraged({numFrequenciesAveraged,hpixFinal,vpixFinal});
 		//std::cout << frequencies.size() << "\t" << numFrequenciesAveraged << std::endl;
 		//std::cout << "longdata size: " << hpix*vpix*frequencies.size() << "\tlongdataAveraged size: " << hpix*vpix*numFrequenciesAveraged << std::endl;
@@ -250,7 +257,7 @@ public:
 		}
 		longdata=longdataAveraged;
 		//std::cout << "made longdataAveraged" << std::endl;
-		freqbins=numFrequenciesAveraged;
+		frequencies.size()=numFrequenciesAveraged;
 		centfreqnum=numFrequenciesAveraged/2;
 		binwidth=freqrange/numFrequenciesAveraged;*/
 		
@@ -281,13 +288,14 @@ public:
 		int status = 0;	//ye olde C style error code
 		long naxis = 4;
 		long nelements;
-		int centfreqnum=freqbins/2 + 1;
+		int centfreqnum=frequencies.size()/2 + 1;
 		double freqrange=frequencies.back()-frequencies.front();
+		double centfreq=(frequencies.back()+frequencies.front())/2.0;
 		double binwidth=freqrange/frequencies.size();
-		//int naxis4=freqbins;
-		/*int centfreqnum=freqbins/2+1;
-		double binwidth=freqrange/freqbins;
-		int naxis4=freqbins;*/
+		//int naxis4=frequencies.size();
+		/*int centfreqnum=frequencies.size()/2+1;
+		double binwidth=freqrange/frequencies.size();
+		int naxis4=frequencies.size();*/
 		int naxis4=(int)data.extent(0);
 		long fpixel[4] = {1,1,1,1};
 		//long naxes[4] = {hpix, vpix, (int)frequencies.size(),1};
@@ -380,80 +388,6 @@ public:
 			fitserror( status );
 		if (fits_close_file(fptr, &status))  
 			fitserror( status );
-	}
-	
-	void readInputFile(std::string filename){
-		std::cout << "Reading file " << filename << std::endl;
-		std::string line;
-		std::ifstream infile(filename.c_str());
-		int linenum=0;
-		std::string dummy;
-		while(!infile.eof()){
-			std::getline(infile, line);
-			if(line[0]=='#')
-				continue;
-			std::stringstream stream;
-			stream << line;
-			switch (linenum) {
-
-				case 13:
-					stream >> dummy >> dummy >> height;
-					if(height <= 0.0){
-						std::cout << "Error reading input file" << std::endl << "height <= 0 AU" << std::endl;
-						exit(1);
-					}
-					height*=AU;
-					break;
-				case 14:
-					stream >> dummy >> dummy >> width;
-					if(width <= 0.0){
-						std::cout << "Error reading input file" << std::endl << "width <= 0 AU" << std::endl;
-						exit(1);
-					}
-					width*=AU;
-					break;
-				case 15:
-					stream >> dummy >> dummy >> vpix;
-					if(vpix < 1){
-						std::cout << "Error reading input file" << std::endl << "number of vertical pixels < 1" << std::endl;
-						exit(1);
-					}
-					break;
-				case 16:
-					stream >> dummy >> dummy >> hpix;
-					if(hpix < 1){
-						std::cout << "Error reading input file" << std::endl << "number of horizontal pixels < 1" << std::endl;
-						exit(1);
-					}
-					break;
-				case 17:
-					stream >> dummy >> dummy >> centfreq;
-					if(centfreq <= 0.0){
-						std::cout << "Error reading input file" << std::endl << "bad central frequency" << std::endl;
-						exit(1);
-					}
-					break;
-				case 18:
-					stream >> dummy >> dummy >> freqbins;
-					if(freqbins < 1){
-						std::cout << "Error reading input file" << std::endl << "number of frequency bins < 1" << std::endl;
-						exit(1);
-					}
-					break;
-					
-				default:
-					break;
-			}
-			linenum++;
-		}
-		//delete[] data;
-		data=marray<double,3>({freqbins,hpix,vpix});
-		std::cout << "image size " << hpix << "x" << vpix << std::endl;
-		std::cout << "image physical size " << height << "x" <<  width << std::endl;
-		std::cout << "image position " << position << std::endl;
-		std::cout << "image target " << target << std::endl;
-		std::cout << "central frequency " << centfreq << std::endl;
-		std::cout << "frequency bins " << freqbins << std::endl;
 	}
 	
 	//special version of propagate() for the case of finding/characterizing the matching temperature point
@@ -560,14 +494,14 @@ public:
 		double heightScaleFactor=(double)newvpix/(double)vpix;
 		double newWidth=width*widthScaleFactor;
 		double newHeight=height*heightScaleFactor;
-		image result(newvpix, newhpix, width, height, position, target, centfreq, freqbins, frequencies, distance);
+		image result(newvpix, newhpix, width, height, frequencies, inc, PA, distance);
 		
 		std::cout << newhpix << "\t" << newvpix << std::endl;
 		//the padded image is now set up, but now we need to copy over the original image data,
 		//so that it is properly in the middle.
 		//the image.data constructor fills in the entire area with zeroes, so all we need to do
 		//is copy over the real data
-		for(int f=0; f<freqbins; f++){
+		for(int f=0; f<frequencies.size(); f++){
 			for(int i=0;i<newhpix;i++){
 				for(int j=0;j<newvpix;j++){
 					int iprime=i-padNum;
@@ -641,7 +575,7 @@ image fitsExtract(std::string filename, std::vector<double> frequencies){
 	//std::cout << yrefval << "\t" << yrefpix << "\t" << yinc << "\t" << yrefval-(yrefpix)*yinc << std::endl;
 	//std::cout << cornerRA << "\t" << cornerdec << std::endl;
 
-	image img(ypix, xpix, 0, 0 , origin, origin, centfreq, nfreq, frequencies, 0);
+	image img(ypix, xpix, 0, 0, frequencies,0,0, 0);
 	//cfitsio gives you an old c array, so we get to do pointer arithmatic
 	std::copy(data,data+(ypix*xpix*nfreq),img.data.begin());
 	img.RA=cornerRA; img.DEC=cornerdec;
@@ -709,7 +643,7 @@ image fitsExtract(std::string filename, std::vector<double> frequencies, double 
 	//std::cout << yrefval << "\t" << yrefpix << "\t" << yinc << "\t" << yrefval-(yrefpix)*yinc << std::endl;
 	//std::cout << cornerRA << "\t" << cornerdec << std::endl;
 	
-	image img(ypix, xpix, width, height, origin, origin, centfreq, nfreq, frequencies, distance);
+	image img(ypix, xpix, width, height, frequencies, 0,0, distance);
 	//cfitsio gives you an old c array, so we get to do pointer arithmatic
 	std::copy(data,data+(ypix*xpix*nfreq),img.data.begin());
 	img.RA=cornerRA; img.DEC=cornerdec; img.distance=distance;
@@ -738,32 +672,30 @@ private:
 public:
 	unsigned int vpix, hpix; //vertical and horizontal pixel numbers
 	double width, height; //uv coordinates - units of wavelength
-	double centfreq;
-	unsigned int freqbins;
 	std::vector<double> frequencies;
 	double distance;
 	
 	marray<double,3> realPart;
 	marray<double,3> imaginaryPart;
 	
-	fourierImage():vpix(0), hpix(0), width(0), height(0), centfreq(0), freqbins(0), distance(0), frequencies(), realPart(), imaginaryPart() {}
+	fourierImage():vpix(0), hpix(0), width(0), height(0), distance(0), frequencies(), realPart(), imaginaryPart() {}
 	
-	fourierImage(unsigned int vpix, unsigned int hpix,double w, double h, double centfreq, unsigned int freqbins, std::vector<double> frequencies, double distance):
-		vpix(vpix),hpix(hpix),width(w),height(h), centfreq(centfreq), freqbins(freqbins), distance(distance), frequencies(frequencies), realPart({freqbins,hpix,vpix}), imaginaryPart({freqbins,hpix,vpix}){
+	fourierImage(unsigned int vpix, unsigned int hpix,double w, double h, std::vector<double> frequencies, double distance):
+		vpix(vpix),hpix(hpix),width(w),height(h), distance(distance), frequencies(frequencies), realPart({frequencies.size(),hpix,vpix}), imaginaryPart({frequencies.size(),hpix,vpix}){
 			xpixsize=(atan(width/distance)/hpix);
 			ypixsize=(atan(height/distance)/vpix);
 		}
 	
 	fourierImage(const fourierImage& other):
-		vpix(other.vpix),hpix(other.hpix), width(other.width),height(other.height),centfreq(other.centfreq), freqbins(other.freqbins), distance(other.distance), 
+		vpix(other.vpix),hpix(other.hpix), width(other.width),height(other.height), distance(other.distance), 
 		xpixsize(other.xpixsize), ypixsize(other.ypixsize), frequencies(other.frequencies), realPart(other.realPart), imaginaryPart(other.imaginaryPart){}
 		
 	fourierImage& operator=(const fourierImage& other){
 		width=other.width; height=other.height;
-		centfreq=other.centfreq; freqbins=other.freqbins;
 		distance=other.distance;
 		xpixsize=other.xpixsize;
 		ypixsize=other.ypixsize;
+		frequencies=other.frequencies;
 		realPart=other.realPart; imaginaryPart=other.imaginaryPart;
 		return(*this);
 	}
@@ -777,8 +709,9 @@ public:
 		long nelements;
 		double freqrange=frequencies.back()-frequencies.front();
 		int centfreqnum=frequencies.size()/2 + 1;
+		double centfreq=(frequencies.back()+frequencies.front())/2.0;
 		double binwidth=freqrange/frequencies.size();
-		int naxis4=freqbins;
+		int naxis4=frequencies.size();
 		long fpixel[4] = {1,1,1,1};
 		long naxes[4] = {vpix, hpix, naxis4,1};
 		
@@ -969,7 +902,7 @@ public:
 	}
 	
 	std::pair<Vec4d, Vec4d> interpAVX(unsigned int freqIndex, Vec4d u, Vec4d v){
-		if(freqIndex >= freqbins){
+		if(freqIndex >= frequencies.size()){
 			std::cout << "Error: Bad channel number in interp." << std::endl;
 			exit(1);
 		}
@@ -1037,7 +970,7 @@ public:
 		//a translation in real space is easy to apply in fourier space as a phase offset.
 		//this is honestly easier than calculating how to repoint the camera or adding and stripping
 		//rows of pixels to the final image, as we just need to multiply all the points by a phase factor.
-		for(int k=0;k<freqbins;k++){
+		for(int k=0;k<frequencies.size();k++){
 			double frequency=frequencies[k];
 			unsigned int start=k*hpix*vpix;
 			//for each point, we need to calculate u and v, and then the phase factor.
@@ -1068,8 +1001,8 @@ fourierImage backTransform(const fourierImage& im){
 	unsigned int hpix=im.hpix;
 	unsigned int vpix=im.vpix;
 	
-	fourierImage results(vpix,hpix,im.width,im.height,im.centfreq,im.freqbins, im.frequencies, im.distance);
-	//std::cout << im.centfreq << "\t" << im.freqrange << "\t" << im.freqbins << "\t" << hpix << "\t" << vpix << std::endl;
+	fourierImage results(vpix,hpix,im.width,im.height, im.frequencies, im.distance);
+	//std::cout << im.centfreq << "\t" << im.freqrange << "\t" << im.frequencies.size() << "\t" << hpix << "\t" << vpix << std::endl;
 	
 	fftw_complex *out1;
 	fftw_plan p1;
@@ -1121,7 +1054,7 @@ fourierImage backTransform(const image& realInput, const image& imaginaryInput){
 	//make sure the images are compatible
 	if(realInput.hpix != imaginaryInput.hpix ||
 		realInput.vpix != imaginaryInput.vpix ||
-		realInput.freqbins != imaginaryInput.freqbins){
+		realInput.frequencies.size() != imaginaryInput.frequencies.size()){
 			std::cout << "ERROR: cannot do fourier transform given two images of different size" << std::endl;
 			exit(1);
 		}
@@ -1132,8 +1065,8 @@ fourierImage backTransform(const image& realInput, const image& imaginaryInput){
 	unsigned int hpix=realInput.hpix;
 	unsigned int vpix=realInput.vpix;
 	
-	fourierImage results(vpix,hpix,realInput.width,realInput.height,realInput.centfreq,realInput.freqbins, realInput.frequencies, realInput.distance);
-	//std::cout << im.centfreq << "\t" << im.freqrange << "\t" << im.freqbins << "\t" << hpix << "\t" << vpix << std::endl;
+	fourierImage results(vpix,hpix,realInput.width,realInput.height, realInput.frequencies, realInput.distance);
+	//std::cout << im.centfreq << "\t" << im.freqrange << "\t" << im.frequencies.size() << "\t" << hpix << "\t" << vpix << std::endl;
 	
 	fftw_complex *out1;
 	fftw_plan p1;
@@ -1187,7 +1120,7 @@ fourierImage FFTDifferent(const image& im){
 
 	unsigned int hpix=im.hpix;
 	unsigned int vpix=im.vpix;
-	fourierImage results(vpix,hpix,im.width,im.height,im.centfreq,im.freqbins, im.frequencies, im.distance);
+	fourierImage results(vpix,hpix,im.width,im.height, im.frequencies, im.distance);
 	
 	for(int f=0;f<results.frequencies.size();f++){
 		unsigned int start=f*hpix*vpix;
@@ -1230,7 +1163,7 @@ fourierImage FFTmultiThread(const image& im, ThreadPool& pool){
 	const unsigned int hpix=im.hpix;
 	const unsigned int vpix=im.vpix;
 	const unsigned int length = hpix*vpix; //number of pixels in each image
-	fourierImage results(vpix,hpix,im.width,im.height,im.centfreq,im.freqbins, im.frequencies, im.distance);
+	fourierImage results(vpix,hpix,im.width,im.height, im.frequencies, im.distance);
 	std::vector<std::future<void> > slices;
 
 	std::vector<fftw_complex*> inputs(results.frequencies.size()), outputs(results.frequencies.size());

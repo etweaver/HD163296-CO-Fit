@@ -185,7 +185,7 @@ struct uvTable{
 
 //given a final set of parameters, print the file to a fits file and make the uv tables
 void printModel(const grid<newDensity>& g1, image& im, const double PA, const std::vector<uvPoint>& data, ThreadPool& pool){
-	im.propagate(g1,-PA,grid<newDensity>::continuum, pool);
+	im.propagate(g1,grid<newDensity>::continuum, pool);
 	
 	double totalFlux1=0;
 	for(int i=0; i<im.hpix; i++){
@@ -309,7 +309,7 @@ public:
 		g(0.01*AU,1000*AU,60*(pi/180),120*(pi/180),0, 6.28318530717, 0, false, true, "diskmodels/HD163296/amr_grid.inp",
 			"diskmodels/HD163296/dust_temperature_phi0.ascii", "diskmodels/HD163296/dust_temperature_phi0.ascii",
 			"diskmodels/HD163296/dustopac.txt", dens, false, 0),
-		im(500, 500, 1312.990851*AU, 1312.990851*AU , origin, origin, 2.30538e+11, 8,{0,0,0,0,0,0,0,0}, 101*3.0857e+18),
+		im(500, 500, 1312.990851*AU, 1312.990851*AU, {0,0,0,0,0,0,0,0}, 0, 0, 101*3.0857e+18),
 		obs(obs),
 		bm(obs,(0.104/(2*log(2))), (0.095/(2*log(2))),-80.216*pi/180)
 	{
@@ -319,8 +319,6 @@ public:
 		g.dustDens.h0=-1; g.dustDens.S=-1;
 		im.RA = 269.0886636250;
 		im.DEC = -21.9562676325;
-		vect pos(-1,0,-1);
-		im.position=pos;
 		tempFileURL=serverTempFileURL;
 	}
 			
@@ -342,12 +340,10 @@ protected:
 		double  Pdust=params[11]; double  h0dust=params[12]; double Sdust=params[13];
 		
 		double inc, PA, p1, p2, p3, d1, d2, d3, w1, w2, w3;
-		inc=-0.768; PA=2.307;
+		inc=0.768; PA=2.307;
 		p1=48.23*AU; p2=85.37*AU; p3=98.89*AU;
 		d1=0.99; d2=0.96; d3=-0.904916;
 		w1=8.5*AU; w2=5.67*AU; w3=3.246*AU;
-		
-		vect pos(10000*AU*cos(inc),0,10000*AU*sin(inc));
 		
 		//we're almost ready to do the imaging, but we need to get the temperature file
 		//from the server
@@ -367,12 +363,12 @@ protected:
 		g.dustDens=dustDens; //dust structure
 		g.dens=gasdens;
 		g.freezeout=true;
-		image im(500, 500, 1312.990851*AU, 1312.990851*AU , origin, origin, 2.30538e+11, 4,{0,0,0,0}, 101*3.0857e+18);
-		im.position=pos;
+		image im(500, 500, 1312.990851*AU, 1312.990851*AU, {0,0,0,0}, inc, PA, 101*3.0857e+18);
 				
 		unsigned int nFreqs=1;
 		std::vector<double> globalFrequencies;
-		double frequency=im.centfreq+(deltaV[fIndex]*1e5/c*im.centfreq);
+		double centfreq=2.30538e11;
+		double frequency=centfreq+(deltaV[fIndex]*1e5/c*centfreq);
         
 		std::vector<double> frequencies;
 		double startfreq=frequency;
@@ -392,12 +388,11 @@ protected:
 			//std::cout << frequencies[i] << std::endl;
 		}
 		im.frequencies=frequencies;
-		im.freqbins=frequencies.size();
 		
-		im.propagate(g,PA,grid<newDensity>::normal, pool);
+		im.propagate(g,grid<newDensity>::normal, pool);
 		
-		std::vector<double> finalfreq; finalfreq.push_back(im.centfreq);
-		image finalIm(im.vpix, im.hpix, im.width, im.height , origin, origin, im.centfreq, 1, finalfreq, im.distance);
+		std::vector<double> finalfreq; finalfreq.push_back(centfreq);
+		image finalIm(im.vpix, im.hpix, im.width, im.height, finalfreq, im.inc, im.PA, im.distance);
 		for(int i=0; i<im.hpix; i++){
 			for(int j=0; j<im.vpix; j++){
 				finalIm.data[0][j][i]=0;
@@ -431,8 +426,7 @@ int main(int argc, char* argv[]){
 	image obsPart3=fitsExtract("frame20.fits",{2.30538e11},101*3.0857e+18);//~0km/s
 	image obsPart4=fitsExtract("frame25.fits",{2.30538e11},101*3.0857e+18);//~1.6km/s
 	image obsPart5=fitsExtract("frame30.fits",{2.30538e11},101*3.0857e+18);//~3.2km/s
-	image obs(obsPart1.vpix, obsPart1.hpix, obsPart1.width, obsPart1.height, obsPart1.position, obsPart1.target, 
-		2.30538e11, 5, {0,0,0,0,0}, obsPart1.distance);
+	image obs(obsPart1.vpix, obsPart1.hpix, obsPart1.width, obsPart1.height, {0,0,0,0,0}, 0, 0, obsPart1.distance);
 	for(int i=0;i<obs.vpix;i++){
 		for(int j=0;j<obs.hpix;j++){
 			obs.data[0][i][j]=obsPart1.data[0][obs.vpix-i-1][j];
