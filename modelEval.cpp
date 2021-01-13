@@ -340,7 +340,7 @@ protected:
 		double  Pdust=params[11]; double  h0dust=params[12]; double Sdust=params[13];
 		
 		double inc, PA, p1, p2, p3, d1, d2, d3, w1, w2, w3;
-		inc=0.768; PA=2.307;
+		inc=0.768; PA=-2.307;
 		p1=48.23*AU; p2=85.37*AU; p3=98.89*AU;
 		d1=0.99; d2=0.96; d3=-0.904916;
 		w1=8.5*AU; w2=5.67*AU; w3=3.246*AU;

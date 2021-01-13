@@ -195,11 +195,8 @@ public:
 					vect normal=-radial;
 					line l(displacement, normal);
 					
-					if(i==250 && j==300){
-						std::cout << displacement << "\t" << normal << std::endl;
-					}
-					//std::vector<double> pix=g.propagateRayAVX(l,freqsAVX,position,type);
-					std::vector<double> pix=g.propagateRay(l,frequencies,position,type);
+					std::vector<double> pix=g.propagateRayAVX(l,freqsAVX,position,type);
+					//std::vector<double> pix=g.propagateRay(l,frequencies,position,type);
 					//std::vector<double> pix(frequencies.size(),0);
 					//std::cout << "Not configured for images right now. Fix return type of grid::propagate" << std::endl;
 					values.push_back(pix);//list of values at each freqency for a row

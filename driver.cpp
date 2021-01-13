@@ -184,7 +184,7 @@ public:
 protected:
 	virtual void processResult(WorkItem item, double value) override{
 		std::lock_guard<std::mutex> lock(resultProcessingLock);
-		std::cout << "placing result " << item << " in processing queue" << std::endl;
+		//std::cout << "placing result " << item << " in processing queue" << std::endl;
 		resultsToProcess.push(std::make_pair(item,value)); //TODO: maybe value should just be a member of WorkItem?
 		needToProcessResults.notify_one();
 	}
@@ -204,7 +204,7 @@ protected:
 			lock.unlock(); //done accessing queue, release lock
 			
 			//process it
-			std::cout << "processing result " << item << std::endl;
+			//std::cout << "processing result " << item << std::endl;
 			unsigned int chainIndex=(unsigned int)item.parameters[0];
 			unsigned int freqIndex=(unsigned int)item.parameters[1];
 			//std::cout << "got indeces: " << chainIndex << "\t" << freqIndex << std::endl;
@@ -411,7 +411,7 @@ int main(int argc, char* argv[]){
 	params.addParameter("dy"); //pixels
 	params.setParameterLowerLimit("dy",-25); params.setParameterUpperLimit("dy",25);*/
 	
-	modelingServer<std::mt19937,stretchMove> testServer(100,5,40,params,137,true);
+	modelingServer<std::mt19937,stretchMove> testServer(100,5,40,params,137,false);
 	testServer.setWatchdogInterval(std::chrono::seconds(2));
 	testServer.setMaxWorkerSilenceTime(std::chrono::seconds(4));
 	testServer.run();

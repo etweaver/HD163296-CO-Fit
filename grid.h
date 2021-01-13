@@ -633,13 +633,13 @@ public:
 				if(!isShrunk && ((numScaleHeightsNext > -scaleHeightLimit && numScaleHeights < -scaleHeightLimit) || (numScaleHeightsNext < scaleHeightLimit && numScaleHeights > scaleHeightLimit))){
 					//std::cout << "shrinking step size" << std::endl;
 					isShrunk=true;
-					stepsize /= 5;
+					stepsize /= 3;
 					numScaleHeightsNext=(pos+dir*stepsize).z/dustDens.scaleHeight((pos+dir*stepsize).r()*sin((pos+dir*stepsize).theta()));
 				}
 				if(isShrunk && ((numScaleHeightsNext > scaleHeightLimit && numScaleHeights < scaleHeightLimit) || (numScaleHeightsNext < -scaleHeightLimit && numScaleHeights > -scaleHeightLimit))){
 					//std::cout << "expanding step size" << std::endl;
 					isShrunk=false;
-					stepsize *= 5;
+					stepsize *= 3;
 					numScaleHeightsNext=(pos+dir*stepsize).z/dustDens.scaleHeight((pos+dir*stepsize).r()*sin((pos+dir*stepsize).theta()));
 				}
 				numScaleHeights=numScaleHeightsNext;
