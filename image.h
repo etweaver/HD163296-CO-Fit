@@ -54,7 +54,7 @@ public:
 			//to position the image, we move put it at the correct angle based on the inclination,
 			//and just move it a large distance away. The actual distance doesn't matter (the rays are parallel), 
 			//as long as it's safely outside the disk
-			target=vect(100000*AU*cos(inc),0,100000*AU*sin(inc));
+			position=vect(10000*AU*cos(inc),0,10000*AU*sin(inc));
 		}
 	image(const image& other):
 		vpix(other.vpix),hpix(other.hpix), width(other.width),height(other.height),position(other.position),target(other.target),
@@ -108,16 +108,6 @@ public:
 		double widthFinal, heightFinal;
 		widthFinal = (hpix%2) ? width : width*(hpixSpecial/hpix); //if we added a column, extend the width to match that.
 		heightFinal = (vpix%2) ? height : height*(vpixSpecial/vpix);
-		
-		/*std::vector<double> frequencies;
-		double freq=centfreq;
-		freq-=freqrange/2;
-		for(int i=0;i<frequencies.size();i++){
-			freq+=(freqrange/frequencies.size());
-			frequencies.push_back(freq);
-			//std::cout << freq << std::endl;
-		}
-		assert(frequencies.size() > 0);*/
 		
 		//now we need to repackage the frequencies into groups of four
 		unsigned int nfreqsAVX=frequencies.size()/4;
@@ -204,7 +194,12 @@ public:
 					
 					vect normal=-radial;
 					line l(displacement, normal);
-					std::vector<double> pix=g.propagateRayAVX(l,freqsAVX,position,type);
+					
+					if(i==250 && j==300){
+						std::cout << displacement << "\t" << normal << std::endl;
+					}
+					//std::vector<double> pix=g.propagateRayAVX(l,freqsAVX,position,type);
+					std::vector<double> pix=g.propagateRay(l,frequencies,position,type);
 					//std::vector<double> pix(frequencies.size(),0);
 					//std::cout << "Not configured for images right now. Fix return type of grid::propagate" << std::endl;
 					values.push_back(pix);//list of values at each freqency for a row
@@ -275,6 +270,10 @@ public:
 		//delete[] longdataAveraged;
 		//std::cout << "all done " << std::endl;
 		
+		if(numpix == 0){
+			std::cout << "no pixels intersect the disk. Double check the image positioning: " << std::endl;
+			std::cout << "position: " << position << ", target: " << target << std::endl;
+		}
 		data=longdata;
 		//return longdata;
 	}
