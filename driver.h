@@ -18,6 +18,9 @@
 
 #include "build/distribute.capnp.h"
 
+//get the timestamps for the log messages
+std::string getLocalTimestamp();
+
 ///A record of a remote worker thread
 struct Worker{
 	Worker():id(0){}
@@ -114,7 +117,7 @@ public:
 	kj::Promise<void> registerWorker(RegisterWorkerContext context) override{
 		auto workerID = context.getParams().getId().getHash();
 		workers.insert(workerID,Worker(workerID));
-		std::cout << "Worker " << workerID << " registered" << std::endl;
+		std::cout << getLocalTimestamp() << "\tWorker " << workerID << " registered" << std::endl;
 		context.getResults().getResp().setType(WorkServer::RegistrationResponse::Type::ACKNOWLEDGED);
 		return kj::READY_NOW;
 	}
@@ -124,7 +127,7 @@ public:
 		workers.update_fn(workerID,[](auto& worker){ worker.updateSeenTime(); });
 		if(done()){
 			context.getResults().getResp().setType(WorkServer::HeartbeatResponse::Type::SHUT_DOWN);
-			std::cout << "Directed worker " << workerID << " to shut down" << std::endl;
+			std::cout << getLocalTimestamp() << "\tDirected worker " << workerID << " to shut down" << std::endl;
 			workers.erase(workerID);
 		}
 		else
@@ -137,7 +140,7 @@ public:
 		//std::cout << "Worker " << workerID << " requested more work" << std::endl;
 		if(done()){ //we're done; instruct the worker to exit
 			context.getResults().getResp().setType(WorkServer::WorkResponse::Type::SHUT_DOWN);
-			std::cout << "Directed worker " << workerID << " to shut down" << std::endl;
+			std::cout << getLocalTimestamp() << "\tDirected worker " << workerID << " to shut down" << std::endl;
 			workers.erase(workerID);
 		}
 		else{
@@ -152,7 +155,7 @@ public:
 				readyWork.pop();
 				item.start(workerID);
 				outstandingWork.insert(item,item);
-				std::cout << "Assigning work item " << item << " to worker " << workerID << std::endl;
+				std::cout << getLocalTimestamp() << "\tAssigning work item " << item << " to worker " << workerID << std::endl;
 				context.getResults().getResp().setType(WorkServer::WorkResponse::Type::WORK_ITEM);
 				auto respParams=context.getResults().getResp().initParameters(item.parameters.size());
 				for(std::size_t i=0; i!=item.parameters.size(); i++)
@@ -174,11 +177,11 @@ public:
 			inProgress=outstandingWork.find(resultItem);
 		}catch(...){}
 		if(inProgress.assignedWorkerID!=workerID){
-			std::cout << "Work item " << resultItem << " is assigned to worker " 
+			std::cout << getLocalTimestamp() << "\tWork item " << resultItem << " is assigned to worker " 
 			<< inProgress.assignedWorkerID << ", not " << workerID << std::endl;
 		}
 		else if(workResult.isResult()){
-			std::cout << "Worker " << workerID << " completed work item "
+			std::cout << getLocalTimestamp() << "\tWorker " << workerID << " completed work item "
 				<< resultItem << std::endl;
 			outstandingWork.erase(inProgress);
 			processResult(inProgress,workResult.getResult());
@@ -194,7 +197,7 @@ public:
 		}
 		else if(workResult.isErrMsg()){
 			outstandingWork.erase(inProgress);
-			std::cout << "Worker " << workerID << " failed to compute work item "
+			std::cout << getLocalTimestamp() << "\tWorker " << workerID << " failed to compute work item "
 			<< resultItem << ": " << workResult.getErrMsg().cStr() << std::endl;
 			std::lock_guard<std::mutex> lock(readyWorkMutex);
 			readyWork.push(inProgress);
@@ -208,7 +211,7 @@ public:
 	}
 	kj::Promise<void> workerShutdown(WorkerShutdownContext context) override{
 		auto workerID = context.getParams().getId().getHash();
-		std::cout << "Worker " << workerID << " sent shutdown notification" << std::endl;
+		std::cout << getLocalTimestamp() << "\tWorker " << workerID << " sent shutdown notification" << std::endl;
 		workers.erase(workerID);
 		return kj::READY_NOW;
 	}
@@ -306,7 +309,7 @@ private:
 			}
 			if(reassign){
 				item.assignedWorkerID=0;
-				std::cout << "Putting work item " << item << " back in the ready queue " << std::endl;
+				std::cout << getLocalTimestamp() << "\tPutting work item " << item << " back in the ready queue " << std::endl;
 				std::lock_guard<std::mutex> lock(readyWorkMutex);
 				readyWork.push(item);
 				outstandingWork.erase(item);
@@ -324,7 +327,7 @@ private:
 				missingWorkers.insert(worker.second);
 		}
 		for(Worker worker : missingWorkers){
-			std::cout << "Reaping missing worker " << worker.id << std::endl;
+			std::cout << getLocalTimestamp() << "\tReaping missing worker " << worker.id << std::endl;
 			workers.erase(worker.id);
 		}
 	}
@@ -344,7 +347,7 @@ private:
 				reapMIAWorkers();
 			}
 			
-			std::cout << "Shutting down" << std::endl;
+			std::cout << getLocalTimestamp() << "\tShutting down" << std::endl;
 			//this is the incredibly stupid set of hoops we have to jump 
 			//through to notify the main thread to exit the 'event loop'
 			capnp::EzRpcClient client("localhost:"+std::to_string(listeningPort));
