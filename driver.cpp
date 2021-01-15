@@ -41,9 +41,11 @@ struct ensembleMember{
 			proposedValue+=v;
 		double logRatio=(currentValue-proposedValue)+logAcceptanceFactor; 
 		bool accept=(logRatio>=0) || (logRatio>log(acceptDist(rng)));
-		if(!params.inBounds(proposedCoords)){
-			accept=false;
-			std::cout << "step rejected: out of bounds" << std::endl;
+		for(int i=0; i<proposedCoords.size();i++){
+			if(!params.inBounds(i,proposedCoords[i])){
+				accept=false;
+				std::cout << "step rejected: out of bounds on parameter " << i << std::endl;
+			}
 		}
 		if(accept){
 			std::cout << "move accepted: old value: " << currentValue << ", new value: " << proposedValue << ", logAcceptanceFactor: " << logAcceptanceFactor << std::endl;

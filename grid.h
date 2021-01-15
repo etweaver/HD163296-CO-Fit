@@ -460,7 +460,7 @@ public:
 		std::vector<double> value (frequencies.size(),0);	//final results will go here
 		std::vector<double> opticalDepth (frequencies.size(),0); //for diagnostics
 		std::vector<double> temperatures; //temps at each step through the disk
-		unsigned int nsteps=100;
+		unsigned int nsteps=1000;
 	
 		for(auto pair : diskPairs){
 			int stepcount=0;
@@ -613,7 +613,7 @@ public:
 		std::vector<Vec4d,aligned_allocator<Vec4d> > value (freqsAVX.size(),0,aligned_allocator<Vec4d>(5));	//final results will go here
 		std::vector<Vec4d,aligned_allocator<Vec4d> > opticalDepth (freqsAVX.size(),0,aligned_allocator<Vec4d>(5)); //for diagnostics
 		std::vector<double> temperatures; //temps at each step through the disk
-		unsigned int nsteps=100;
+		unsigned int nsteps=1000;
 		
 		for(auto pair : diskPairs){
 			int stepcount=0;
