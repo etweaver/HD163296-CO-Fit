@@ -1,0 +1,848 @@
+#!/bin/bash
+
+check_pkgconfig(){
+	if [ "$CHECKED_PKGCONFIG" ]; then return; fi
+	echo "Looking for pkg-config..."
+	PKG_CONFIG_PATH=$(which pkg-config 2>&1)
+	if [ "$?" -ne 0 ]; then
+		echo "Error: pkg-config not found; you will need to specify library locations manually" 1>&2
+		exit 1
+	fi
+	echo " Found $PKG_CONFIG_PATH"
+	CHECKED_PKGCONFIG=1
+}
+
+find_package(){
+	PKG=$1
+	VAR_PREFIX=`echo $PKG | tr '[:lower:]-' '[:upper:]_'`
+	TMP_FOUND=`eval echo "$"${VAR_PREFIX}_FOUND`
+	if [ "$TMP_FOUND" ]; then return; fi
+	check_pkgconfig
+	echo "Looking for $PKG..."
+
+	pkg-config --exists $PKG
+	if [ "$?" -ne 0 ]; then
+		echo " $PKG not found with pkg-config"
+		return
+	fi
+	if [ $# -ge 2 ]; then
+		MIN_VERSION=$2
+		pkg-config --atleast-version $MIN_VERSION $PKG
+		if [ "$?" -ne 0 ]; then
+			echo "Error: installed $PKG version ("`pkg-config --modversion $PKG`") is too old; version >=$MIN_VERSION is required" 1>&2
+			exit 1
+		fi
+	fi
+	echo " Found $PKG version `pkg-config --modversion $PKG`"
+	eval ${VAR_PREFIX}_FOUND=1
+	eval ${VAR_PREFIX}_VERSION=\"`pkg-config --modversion $PKG`\"
+	eval ${VAR_PREFIX}_CFLAGS=\"`pkg-config --cflags $PKG`\"
+	eval ${VAR_PREFIX}_LDFLAGS=\"`pkg-config --libs $PKG`\"
+	eval ${VAR_PREFIX}_INCDIR=\"`pkg-config --variable=includedir $PKG`\"
+	eval ${VAR_PREFIX}_LIBDIR=\"`pkg-config --variable=libdir $PKG`\"
+}
+
+try_find_capnp() {
+	find_package capnp
+	find_package capnp-rpc
+
+	if [ "$#" -eq 1 ]; then
+		CAPNP_EXE=$(which "$CAPNP_EXE" 2>/dev/null)
+		if [ "$?" -ne 0 ]; then return; fi
+	else
+		CAPNP_EXE=$(which capnp 2>/dev/null)
+		if [ "$?" -ne 0 ]; then return; fi
+	fi
+	"$CAPNP_EXE" --help > /dev/null
+	if [ "$?" -ne 0 ]; then 
+		" Unable to execute $CAPNP_EXE"
+		return
+	fi
+
+	if [ "$CAPNP_FOUND" -a "$CAPNP-RPC" ]; then
+		# jam the capnp-rpc flags together with the capnp flags
+		CAPNP_CFLAGS="$CAPNP_RPC_CFLAGS $CAPNP_CFLAGS"
+		CAPNP_LDFLAGS="$CAPNP_RPC_LDFLAGS $CAPNP_LDFLAGS"
+		return
+	fi
+	
+	# See if we can reverse engineer the include and library paths from the executable location
+	GUESS_DIR=$(echo "$CAPNP_EXE" | sed 's|/bin.*||')
+	POSSIBLE_CAPNP_LIBDIRS="${GUESS_DIR}/lib ${GUESS_DIR}/lib64 ${GUESS_DIR}/lib/x86_64-linux-gnu"
+	POSSIBLE_CAPNP_INCDIRS="${GUESS_DIR}/include"
+
+	for CAPNP_LIBDIR in $POSSIBLE_CAPNP_LIBDIRS; do
+		if [ -d $CAPNP_LIBDIR -a \( -e $CAPNP_LIBDIR/libcapnp.a -o -e $CAPNP_LIBDIR/libcapnp.so -o -e $CAPNP_LIBDIR/libcapnp.dylib \) \
+             -a \( -e $CAPNP_LIBDIR/libcapnp-rpc.a -o -e $CAPNP_LIBDIR/libcapnp-rpc.so -o -e $CAPNP_LIBDIR/libcapnp-rpc.dylib \) ]; then
+			CAPNP_FOUND=1
+			break
+		fi
+	done
+	if [ ! "$CAPNP_FOUND" ]; then
+		echo " Unable to locate the capnp library in $GUESS_DIR"
+	fi
+	for CAPNP_INCDIR in $POSSIBLE_CAPNP_INCDIRS; do
+		if [ -d $CAPNP_INCDIR -a -e $CAPNP_INCDIR/capnp/common.h -a -e $CAPNP_INCDIR/capnp/rpc.h ]; then
+			break
+		fi
+	done
+	if [ ! -d "$CAPNP_INCDIR" -o ! -e "$CAPNP_INCDIR/capnp/common.h" -o ! -e "$CAPNP_INCDIR/capnp/rpc.h" ]; then
+		echo " Unable to locate capnp/common.h in $GUESS_DIR"
+		return
+	fi
+	CAPNP_VERSION=$(sed -n 's|#define[^C]*CAPNP_VERSION_MAJOR[^0-9]*\(.*\)|\1|p' < "$CAPNP_INCDIR/capnp/common.h")
+	CAPNP_VERSION="${CAPNP_VERSION}."$(sed -n 's|#define[^C]*CAPNP_VERSION_MINOR[^0-9]*\(.*\)|\1|p' < "$CAPNP_INCDIR/capnp/common.h")
+	CAPNP_VERSION="${CAPNP_VERSION}."$(sed -n 's|#define[^C]*CAPNP_VERSION_MICRO[^0-9]*\(.*\)|\1|p' < "$CAPNP_INCDIR/capnp/common.h")
+	if [ "$CAPNP_VERSION" = ".." ]; then
+		CAPNP_VERSION="<unknown>"
+	fi
+
+	CAPNP_CFLAGS="-pthread -I${CAPNP_INCDIR}"
+	CAPNP_LDFLAGS="-Wl,-rpath -Wl,${CAPNP_LIBDIR} -L${CAPNP_LIBDIR} -lcapnp -lkj -pthread"
+	CAPNP_FOUND=1
+	echo " Found capnp version ${CAPNP_VERSION} in $GUESS_DIR"
+	echo " capnp executable is ${CAPNP_EXE}"
+	echo " capnp include directory is ${CAPNP_INCDIR}"
+	if [ "$CAPNP_LIBDIR" ]; then
+		echo " capnp library directory is ${CAPNP_LIBDIR}"
+	fi
+}
+
+try_find_libcurl() {
+	PKG=libcurl
+	VAR_PREFIX=`echo $PKG | tr [:lower:] [:upper:]`
+	TMP_FOUND=`eval echo "$"${VAR_PREFIX}_FOUND`
+	if [ "$TMP_FOUND" ]; then return; fi
+
+	if [ "$#" -eq 1 ]; then
+ 		GUESS_DIR=$1
+ 		POSSIBLE_LIBCURL_LIBDIRS="${GUESS_DIR}/lib ${GUESS_DIR}/lib64 ${GUESS_DIR}/lib/x86_64-linux-gnu"
+		POSSIBLE_LIBCURL_INCDIRS="${GUESS_DIR}/include"
+	elif [ "$#" -eq 2 ]; then
+		GUESS_DIR="$1 and $2"
+		POSSIBLE_LIBCURL_LIBDIRS="$2"
+		POSSIBLE_LIBCURL_INCDIRS="$1"
+	else
+		echo "Wrong number of arguments to try_find_libcurl"
+		return
+ 	fi
+	for LIBCURL_LIBDIR in $POSSIBLE_LIBCURL_LIBDIRS; do
+		if [ -d $LIBCURL_LIBDIR -a \( -e $LIBCURL_LIBDIR/libcurl.a -o -e $LIBCURL_LIBDIR/libcurl.so -o -e $LIBCURL_LIBDIR/libcurl.dylib \) ]; then
+			LIBCURL_FOUND=1
+			break
+		fi
+	done
+	if [ ! "$LIBCURL_FOUND" ]; then
+		echo " Unable to locate the libcurl library in $GUESS_DIR"
+	fi
+	for LIBCURL_INCDIR in $POSSIBLE_LIBCURL_INCDIRS; do
+		if [ -d $LIBCURL_INCDIR -a -e $LIBCURL_INCDIR/curl/curl.h ]; then
+			break
+		fi
+	done
+	if [ ! -d "$LIBCURL_INCDIR" -o ! -e "$LIBCURL_INCDIR/curl/curl.h" ]; then
+		echo " Unable to locate curl/curl.h in $GUESS_DIR"
+		return
+	fi
+	CURL_VERSION=$(sed -n 's|#define[^L]*LIBCURL_VERSION[^"]*"\([^"]*\)"|\1|p' < "$LIBCURL_INCDIR/curl/curlver.h")
+	if [ ! "$CURL_VERSION" ]; then
+		CURL_VERSION="<unknown>"
+	fi
+
+	LIBCURL_CFLAGS="-I${LIBCURL_INCDIR}"
+	LIBCURL_LDFLAGS="-Wl,-rpath -Wl,${LIBCURL_LIBDIR} -L${LIBCURL_LIBDIR} -lcurl"
+	LIBCURL_FOUND=1
+	echo " Found libcurl version ${CURL_VERSION} in $GUESS_DIR"
+	echo " libcurl include directory is ${LIBCURL_INCDIR}"
+	if [ "$LIBCURL_LIBDIR" ]; then
+		echo " libcurl library directory is ${LIBCURL_LIBDIR}"
+	fi
+}
+
+find_libcurl() {
+	find_package libcurl
+	
+	try_find_libcurl /usr
+	try_find_libcurl /usr/local
+}
+
+find_hdf5(){
+	PKG=hdf5
+	echo "Looking for $PKG..."
+	VAR_PREFIX=`echo $PKG | tr [:lower:] [:upper:]`
+	TMP_FOUND=`eval echo "$"${VAR_PREFIX}_FOUND`
+	if [ "$TMP_FOUND" ]; then return; fi
+
+	which h5cc 2>&1 > /dev/null
+	if [ "$?" -ne 0 ]; then return; fi
+
+	which h5ls 2>&1 > /dev/null
+	if [ "$?" -eq 0 ]; then
+		HDF5_VERSION=`h5ls --version | sed 's/.* \([0-9.]*\)/\1/'`
+		echo " Found $PKG version $HDF5_VERSION via executables in \$PATH"
+		if [ $# -ge 1 ]; then
+			MIN_VERSION=$1
+			#TODO: actually check version
+		fi
+	else
+		echo " h5ls not found; cannot check $PKG version"
+		echo " Proceeding with unknown version and hoping for the best"
+	fi
+	HDF5_COMPILE_COMMAND=`h5cc -show`
+	for item in $HDF5_COMPILE_COMMAND; do
+		item=`echo "$item" | sed 's| |\n|g' | sed -n 's/.*-L\([^ ]*\).*/\1/p'`
+		if [ -n "$item" ]; then
+			POSSIBLE_HDF5_LIBDIRS="$POSSIBLE_HDF5_LIBDIRS
+				$item"
+		fi
+	done
+	for HDF5_LIBDIR in $POSSIBLE_HDF5_LIBDIRS; do
+		if [ -d $HDF5_LIBDIR -a \( -e $HDF5_LIBDIR/libhdf5.a -o -e $HDF5_LIBDIR/libhdf5.so \) ]; then
+			break
+		fi
+	done
+	if [ ! -d $HDF5_LIBDIR -o ! \( -e $HDF5_LIBDIR/libhdf5.a -o -e $HDF5_LIBDIR/libhdf5.so \) ]; then
+		echo " Unable to guess $PKG library directory"
+		return
+	fi
+	POSSIBLE_HDF5_INCDIRS=`echo "$HDF5_COMPILE_COMMAND" | sed 's| |\n|g' | sed -n 's/.*-I\([^ ]*\).*/\1/p'`
+	POSSIBLE_HDF5_INCDIRS="$POSSIBLE_HDF5_INCDIRS ${HDF5_LIBDIR}/../include"
+	for HDF5_INCDIR in $POSSIBLE_HDF5_INCDIRS; do
+		if [ -d $HDF5_INCDIR -a -e $HDF5_INCDIR/H5version.h ]; then
+			break
+		fi
+	done
+	if [ ! -d $HDF5_INCDIR -o ! $HDF5_INCDIR/H5version.h ]; then
+		echo " Unable to guess $PKG include directory"
+		return
+	fi
+
+	HDF5_CFLAGS="-I${HDF5_INCDIR}"
+	HDF5_LDFLAGS=`echo "$HDF5_COMPILE_COMMAND" | \
+	sed 's/ /\\
+	/g' | \
+	sed -n -E \
+	-e '/^[[:space:]]*-l/p' \
+	-e '/^[[:space:]]*-L/p' \
+	-e '/^[[:space:]]*-Wl,/p' \
+	-e 's/^[[:space:]]*.*lib([^.]*)\.a/-l\1/p' \
+	-e 's/^[[:space:]]*.*lib([^.]*)\.so/-l\1/p' \
+	-e 's/^[[:space:]]*.*lib([^.]*)\.dylib/-l\1/p' `
+	HDF5_LDFLAGS=`echo $HDF5_LDFLAGS` # collapse to single line
+
+	HDF5_FOUND=1
+}
+
+# less searching for python than verfying that the given executable works and extracting relevant paths
+try_find_python(){
+	echo "Looking for python"
+
+	if which ${PYTHON_EXE} > /dev/null 2>&1; then
+		PYTHON_EXE=$(which ${PYTHON_EXE} 2>/dev/null)
+		echo " Using python executable ${PYTHON_EXE}"
+	else
+		echo " ${PYTHON_EXE} is not a valid python executable"
+		return
+	fi
+
+	PYTHON_VERSION=`${PYTHON_EXE} -c 'import sys; print(str(sys.version_info.major)+"."+str(sys.version_info.minor))'`
+	if [ "$?" -ne 0 ]; then
+		echo "Unable to use python executable ${PYTHON_EXE} (version check failed)"
+		return
+	fi
+	PYTHONVERSIONSIMPLE=`${PYTHON_EXE} -c 'import sys; print(str(sys.version_info.major)+str(sys.version_info.minor))'`
+	
+	PYTHON_INCDIR=`${PYTHON_EXE} -c 'from distutils import sysconfig; print(sysconfig.get_python_inc())'`
+	if [ -d "$PYTHON_INCDIR" ]; then
+		echo " Found python include dir $PYTHON_INCDIR"
+	else
+		echo " Unable to locate the python include dir"
+		return
+	fi
+
+	# This is the directory to which libraries should be installed for python to find them
+	PYTHON_MODULEDIR=`${PYTHON_EXE} -c 'from distutils.sysconfig import get_python_lib; print(get_python_lib(plat_specific=True, standard_lib=False))'`
+	if [ "$PYTHON_MODULEDIR" ]; then
+		echo " Python module install dir is $PYTHON_MODULEDIR"
+	else
+		echo " Unable to locate the python module dir"
+		return
+	fi
+	
+	# This is the directory that python claims contains its standard library, 
+	# which may or may not include the actual libpython
+	PYTHON_STDLIBDIR=`${PYTHON_EXE} -c 'from distutils import sysconfig; print(sysconfig.get_python_lib(plat_specific=True,standard_lib=True))'`
+	# This may contain a suffix which appears after the version like in 'libpython3.6m'
+	# See https://www.python.org/dev/peps/pep-3149/#proposal
+	PYTHONLIBSUFFIX=`${PYTHON_EXE} -c 'from distutils import sysconfig; print(sysconfig.build_flags)' 2>/dev/null`
+
+	# Here we just try to guess every location anyone has ever seen a libpython in the wild
+	POSSIBLE_PYTHON_LIBDIRS="/lib /lib64 /usr/lib /usr/lib64 /usr/local/lib /usr/local/lib64 ${PYTHON_STDLIBDIR} ${PYTHON_STDLIBDIR}/lib"
+	# sometimes Apple puts a symlink in ${PYTHONSTDLIBDIR}/lib, sometimes it doesn't
+	TMP=`echo "$PYTHON_STDLIBDIR" | sed -n s'|\(.*/lib\)/python'"${PYTHON_VERSION}"'|\1|p'`
+	if [ "$TMP" ]; then POSSIBLE_PYTHON_LIBDIRS="${POSSIBLE_PYTHON_LIBDIRS} ${TMP}"; fi
+	# Ubuntu is special, of course
+	if uname -a | grep -i 'ubuntu' > /dev/null; then
+		POSSIBLE_PYTHON_LIBDIRS="${POSSIBLE_PYTHON_LIBDIRS} /usr/lib/$(uname -i)-linux-gnu"
+	fi
+
+	for PYTHON_LIBDIR in $POSSIBLE_PYTHON_LIBDIRS; do
+		for PV in $PYTHON_VERSION $PYTHONVERSIONSIMPLE; do
+			#echo "  Looking for ${PYTHON_LIBDIR}/libpython${PV}${PYTHONLIBSUFFIX}.(a|so|dylib)"
+			if [ -d $PYTHON_LIBDIR ]; then
+				if [ -e ${PYTHON_LIBDIR}/libpython${PV}${PYTHONLIBSUFFIX}.a ]; then
+					PYTHON_LIBRARY=${PYTHON_LIBDIR}/libpython${PV}${PYTHONLIBSUFFIX}.a
+					break
+				elif [ -e ${PYTHON_LIBDIR}/libpython${PV}${PYTHONLIBSUFFIX}.so ];then
+					PYTHON_LIBRARY=${PYTHON_LIBDIR}/libpython${PV}${PYTHONLIBSUFFIX}.so
+					break
+				elif [ -e ${PYTHON_LIBDIR}/libpython${PV}${PYTHONLIBSUFFIX}.dylib ]; then
+					PYTHON_LIBRARY=${PYTHON_LIBDIR}/libpython${PV}${PYTHONLIBSUFFIX}.dylib
+					break
+				fi
+			fi
+		done
+	done
+	if [ -e "$PYTHON_LIBRARY" ]; then
+		echo " Found python library $PYTHON_LIBRARY"
+	else
+		echo " Unable to locate the python library"
+		return
+	fi
+
+	PYTHON_CFLAGS="-I${PYTHON_INCDIR}"
+	PYTHON_LDFLAGS="-L${PYTHON_LIBDIR} -l$(echo "$PYTHON_LIBRARY" | sed 's|.*lib\(python.*\)\.[a-z]*|\1|')"
+	PYTHON_FOUND=1
+}
+
+try_find_boost(){
+	PKG=boost
+	VAR_PREFIX=`echo $PKG | tr [:lower:] [:upper:]`
+	TMP_FOUND=`eval echo "$"${VAR_PREFIX}_FOUND`
+	if [ "$TMP_FOUND" ]; then return; fi
+	if [ "$PYTHON_FOUND" ]; then
+		PYV=`${PYTHON_EXE} -c 'import sys; print(str(sys.version_info.major)+str(sys.version_info.minor))'`
+		PYVM=`${PYTHON_EXE} -c 'import sys; print(sys.version_info.major)'`
+		echo "Looking for $PKG built for python ${PYV} in $GUESS_DIR..."
+	else
+		echo "Looking for $PKG in $GUESS_DIR..."
+	fi
+	
+ 	if [ "$#" -eq 1 ]; then
+ 		GUESS_DIR=$1
+ 		POSSIBLE_BOOST_LIBDIRS="${GUESS_DIR}/lib ${GUESS_DIR}/lib64 ${GUESS_DIR}/lib/x86_64-linux-gnu"
+		POSSIBLE_BOOST_INCDIRS="${GUESS_DIR}/include"
+	elif [ "$#" -eq 2 ]; then
+		GUESS_DIR="$1 and $2"
+		POSSIBLE_BOOST_LIBDIRS="$2"
+		POSSIBLE_BOOST_INCDIRS="$1"
+	else
+		echo "Wrong number of arguments to try_find_boost"
+		return
+ 	fi
+	if [ "$PYTHON_FOUND" ]; then
+		for PYV_SUFFIX in $PYV $PYVM $PYV-mt $PVM-mt ''; do
+			for BOOST_LIBDIR in $POSSIBLE_BOOST_LIBDIRS; do
+				if [ -d $BOOST_LIBDIR -a \( -e $BOOST_LIBDIR/libboost_python${PYV_SUFFIX}.a -o -e $BOOST_LIBDIR/libboost_python${PYV_SUFFIX}.so -o -e $BOOST_LIBDIR/libboost_python${PYV_SUFFIX}.dylib \) ]; then
+					if [ ! "$PYV_SUFFIX" ]; then
+						echo " Found boost_python with no python version tag; hoping it is compatible"
+					fi
+					BOOST_PYTHON_FOUND=1
+					BOOST_PYTHON_LDFLAGS="-lboost_python${PYV_SUFFIX}"
+					break
+				fi
+			done
+			if [ "$BOOST_PYTHON_FOUND" ]; then break; fi
+		done
+		if [ ! "$BOOST_PYTHON_FOUND" ]; then
+			echo " Unable to locate the boost_python library in $GUESS_DIR"
+		fi
+	fi
+	for BOOST_INCDIR in $POSSIBLE_BOOST_INCDIRS; do
+		if [ -d $BOOST_INCDIR -a -e $BOOST_INCDIR/boost/version.hpp ]; then
+			break
+		fi
+	done
+	if [ ! -d "$BOOST_INCDIR" -o ! -e "$BOOST_INCDIR/boost/version.hpp" ]; then
+		echo " Unable to locate boost/version.hpp in $GUESS_DIR"
+		return
+	fi
+	BOOST_CFLAGS="-I${BOOST_INCDIR}"
+	BOOST_LDFLAGS="-Wl,-rpath -Wl,${BOOST_LIBDIR} -L${BOOST_LIBDIR}"
+	BOOST_FOUND=1
+	echo " Found boost in $GUESS_DIR"
+	echo " Boost include directory is ${BOOST_INCDIR}"
+	if [ "$BOOST_LIBDIR" ]; then
+		echo " Boost library directory is ${BOOST_LIBDIR}"
+	fi
+}
+
+find_numpy(){
+	echo "Looking for numpy..."
+	NUMPY_INCDIR=$(${PYTHON_EXE} -c 'import numpy; print(numpy.get_include())')
+	if [ "$?" -ne 0 ]; then
+		echo "Unable to import numpy using ${PYTHON_EXE}"
+		return
+	fi
+	NUMPY_CFLAGS="-I${NUMPY_INCDIR}"
+	NUMPY_FOUND=1
+	echo " Found numpy"
+	echo " Numpy include directory is ${NUMPY_INCDIR}"
+}
+
+ensure_found(){
+	PKG=$1
+	VAR_PREFIX=`echo $PKG | tr [:lower:] [:upper:]`
+	TMP_FOUND=`eval echo "$"${VAR_PREFIX}_FOUND`
+	if [ "$TMP_FOUND" ]; then return; fi
+	#not found
+	lowername=`echo $PKG | tr [A-Z] [a-z]`
+
+	TMP_INCDIR=`eval echo "$"${VAR_PREFIX}_INCDIR`
+	TMP_LIBDIR=`eval echo "$"${VAR_PREFIX}_LIBDIR`
+	if [ "$TMP_INCDIR" -a "$TMP_LIBDIR" ]; then
+		echo "Error: $PKG not found in $TMP_INCDIR and $TMP_LIBDIR or with pkg-config" 1>&2
+		echo "Please verify that the path given to --with-${lowername} is correct" 1>&2
+	else
+		echo "Error: $PKG not installed or not registered with pkg-config" 1>&2
+		echo "Please specify location using the --with-${lowername} flag" 1>&2
+	fi
+	unset TMP_INCDIR
+	unset TMP_LIBDIR
+	exit 1
+}
+
+x86_compile_flags() {
+	CPU_FEATURES="$1"
+	X86_FLAGS=""
+	
+	if echo "$CPU_FEATURES" | grep -q '^sse$'; then
+		X86_FLAGS="${X86_FLAGS} -msse"
+	fi
+	if echo "$CPU_FEATURES" | grep -q '^sse2'; then
+		X86_FLAGS="${X86_FLAGS} -msse2"
+	fi
+	if echo "$CPU_FEATURES" | grep -q '^sse3'; then
+		X86_FLAGS="${X86_FLAGS} -msse3"
+	fi
+	# note that '.' in SSE search patterns can also match '_', which is used by Linux
+	if echo "$CPU_FEATURES" | grep -q '^sse4.1'; then
+		X86_FLAGS="${X86_FLAGS} -msse4.1"
+	fi
+	if echo "$CPU_FEATURES" | grep -q '^sse4.2'; then
+		X86_FLAGS="${X86_FLAGS} -msse4.2"
+	fi
+	if echo "$CPU_FEATURES" | grep -q '^avx$'; then
+		X86_FLAGS="${X86_FLAGS} -mavx"
+	fi
+	if echo "$CPU_FEATURES" | grep -q '^avx2'; then
+		X86_FLAGS="${X86_FLAGS} -mavx2"
+	fi
+	# trim leading whitespace
+	X86_FLAGS=$(echo "$X86_FLAGS" | sed 's|^ *||')
+}
+
+determine_cpu_feature_flags() {
+	# if specified by the user, conver to lowercase and convert spaces to newlines
+	if [ "$CPU_FEATURES" != "NOT_DEFINED" ]; then
+		CPU_FEATURES=$(echo "$CPU_FEATURES" | tr ' [:upper:]' '\n[:lower:]')
+	else
+		echo "Detecting supported CPU features..."
+	fi
+
+	case $OS_NAME in 
+		Linux )
+			CPU_VENDOR=$(sed -n 's|vendor_id.*: *\(.*\)|\1|p' /proc/cpuinfo | head -n1)
+			if [ "$CPU_VENDOR" = "AuthenticAMD" -o "$CPU_VENDOR" = "GenuineIntel" ]; then
+				if [ "$CPU_FEATURES" = "NOT_DEFINED" ]; then
+					CPU_FEATURES=$(sed -n 's|flags.*: *\(.*\)|\1|p' /proc/cpuinfo | head -n1 | tr ' ' '\n')
+				fi
+				x86_compile_flags "$CPU_FEATURES"
+				CPU_CFLAGS="$X86_FLAGS"
+			fi
+			;;
+		Darwin )
+			CPU_VENDOR=$(sysctl -n machdep.cpu.vendor)
+			if [ "$CPU_VENDOR" = "AuthenticAMD" -o "$CPU_VENDOR" = "GenuineIntel" ]; then
+				if [ "$CPU_FEATURES" = "NOT_DEFINED" ]; then
+					CPU_FEATURES=$(sysctl -n machdep.cpu.features machdep.cpu.leaf7_features | tr ' [:upper:]' '\n[:lower:]')
+				fi
+				x86_compile_flags "$CPU_FEATURES"
+				CPU_CFLAGS="$X86_FLAGS"
+			fi
+			;;
+
+	esac
+	echo " Will use the following CPU feature flags to compile:"
+	echo "  $CPU_CFLAGS"
+}
+
+
+PREFIX=/usr/local
+INSTALL_LIBDIR=lib
+
+VERSION_NUM=100000
+VERSION=`echo $VERSION_NUM | awk '{
+	major = int($1/100000);
+	minor = int($1/100)%1000;
+	patch = $1%100;
+	print major"."minor"."patch;
+}'`
+
+OS_NAME=`uname -s`
+
+GUESS_CC=gcc
+GUESS_CXX=g++
+GUESS_AR=ar
+GUESS_LD=ld
+if [ "$OS_NAME" = Linux ]; then
+	DYN_SUFFIX=.so
+	DYN_OPT='-shared -Wl,-soname,$(shell basename $(DYN_PRODUCT))'
+	DYN_OPT_PY='-shared -Wl,-soname,$(shell basename $(PYTHON_LIB))'
+fi
+if [ "$OS_NAME" = Darwin ]; then
+	GUESS_CC=clang
+	GUESS_CXX=clang++
+	GUESS_LD=clang++
+	DYN_SUFFIX=.dylib
+	DYN_OPT='-dynamiclib -compatibility_version $(VERSION) -current_version $(VERSION)'
+	DYN_OPT_PY='-dynamiclib -compatibility_version $(VERSION) -current_version $(VERSION)'
+fi
+
+CC=${CC-$GUESS_CC}
+CXX=${CXX-$GUESS_CXX}
+AR=${AR-$GUESS_AR}
+LD=${LD-$GUESS_LD}
+
+CPU_FEATURES=${CPU_FEATURES:-NOT_DEFINED}
+
+PYTHON_EXE="python"
+if which "$PYTHON_EXE" > /dev/null 2>&1; then
+	: # good, keep our initial guess
+elif which "python3" > /dev/null 2>&1; then
+	PYTHON_EXE="python3"
+fi
+
+HELP="Usage: ./configure [OPTION]... 
+
+Installation directories:
+  --prefix=PREFIX         install files in PREFIX
+                          [$PREFIX]
+
+By default, \`make install' will install all the files in
+\`$PREFIX/bin', \`$PREFIX/lib' etc.  You can specify
+an installation prefix other than \`$PREFIX' using \`--prefix',
+for instance \`--prefix=\$HOME'.
+
+Fine tuning of the installation directories:
+
+  --libdir=DIR            object code libraries [lib]
+
+The following options can be used to maunally specify the 
+locations of dependencies:
+  --with-capnp=DIR               use the copy of capnp in DIR assuming headers
+                                 are in DIR/include, libraries in DIR/lib, and 
+                                 executables are in DIR/bin 
+  --with-capnp-incdir=DIR        use the copy of capnp in DIR
+  --with-capnp-libdir=DIR        use the copy of capnp in DIR
+  --capnp-bin=CAPNP_EXECUTABLE   use this capnp executable
+                                 (default is 'capnp')
+  --with-cfitsio=DIR             use the copy of cfitsio in DIR assuming headers
+                                 are in DIR/include and libraries in DIR/lib
+  --with-cfitsio-incdir=DIR      use the copy of cfitsio in DIR
+  --with-cfitsio-libdir=DIR      use the copy of cfitsio in DIR
+  --with-fftw3=DIR               use the copy of FFTW3 in DIR assuming headers
+                                 are in DIR/include and libraries in DIR/lib
+  --with-fftw3-incdir=DIR        use the copy of FFTW3 in DIR
+  --with-fftw3-libdir=DIR        use the copy of FFTW3 in DIR
+  --with-libcurl=DIR             use the copy of libcurl in DIR assuming headers
+                                 are in DIR/include and libraries in DIR/lib
+  --with-libcurl-incdir=DIR      use the copy of flibcurl in DIR
+  --with-libcurl-libdir=DIR      use the copy of flibcurl in DIR
+  --use-cpu-features=FATURE_LIST whitespace separated list of CPU ISA features
+                                 to assume when compiling
+For the python bindings the following flags are used:
+  --with-python-bindings         enable python binding compilation
+  --with-boost-incdir=DIR        use the copy of Boost in DIR
+  --with-boost-libdir=DIR        use the copy of Boost in DIR
+  --with-boost=DIR               use the copy of Boost in DIR assuming headers
+                                 are in DIR/include and libraries in DIR/lib
+  --python-bin=PYTHON_EXECUTABLE use this python executable
+                                 (default is 'python')
+  --python-module-dir=DIR        install python module to this directory, rather
+                                 than the default system location. The special 
+                                 value site.USER_SITE will be automatically
+                                 expanded using the python interpreter
+
+Some influential environment variables:
+CC          C compiler command
+CXX         C++ compiler command
+AR          Static linker command
+LD          Dynamic linker command
+" #`
+
+for var in "$@"
+do
+	if [ "$var" = "--help" -o "$var" = "-h" ]; then
+		echo "$HELP"
+		exit 0
+	fi
+
+	TMP=`echo "$var" | sed -n 's/^--prefix=\(.*\)$/\1/p'`
+	if [ "$TMP" ]; then PREFIX="$TMP"; continue; fi
+
+	TMP=`echo "$var" | sed -n 's/^--libdir=\(.*\)$/\1/p'`
+	if [ "$TMP" ]; then INSTALL_LIBDIR="$TMP"; continue; fi
+
+	TMP=`echo "$var" | sed -n 's/^--use-cpu-features=\(.*\)$/\1/p'`
+	if [ "$TMP" ]; then CPU_FEATURES="$TMP"; continue; fi
+
+	TMP=`echo "$var" | sed -n 's/^--with-capnp=\(.*\)$/\1/p'`
+	if [ "$TMP" ]; then
+		CAPNP_INCDIR="${TMP}/include";
+		CAPNP_LIBDIR="${TMP}/lib";
+		CAPNP_BIN="${TMP}/bin/capnp";
+	continue; fi
+
+	TMP=`echo "$var" | sed -n 's/^--with-capnp-incdir=\(.*\)$/\1/p'`
+	if [ "$TMP" ]; then CAPNP_INCDIR="$TMP"; continue; fi
+
+	TMP=`echo "$var" | sed -n 's/^--with-capnp-libdir=\(.*\)$/\1/p'`
+	if [ "$TMP" ]; then CAPNP_LIBDIR="$TMP"; continue; fi
+
+	TMP=`echo "$var" | sed -n 's/^--capnp-bin=\(.*\)$/\1/p'`
+	if [ "$TMP" ]; then CAPNP_BIN="$TMP"; continue; fi
+
+	TMP=`echo "$var" | sed -n 's/^--with-cfitsio=\(.*\)$/\1/p'`
+	if [ "$TMP" ]; then
+		CFITSIO_INCDIR="${TMP}/include";
+		CFITSIO_LIBDIR="${TMP}/lib";
+	continue; fi
+
+	TMP=`echo "$var" | sed -n 's/^--with-cfitsio-incdir=\(.*\)$/\1/p'`
+	if [ "$TMP" ]; then CFITSIO_INCDIR="$TMP"; continue; fi
+
+	TMP=`echo "$var" | sed -n 's/^--with-cfitsio-libdir=\(.*\)$/\1/p'`
+	if [ "$TMP" ]; then CFITSIO_LIBDIR="$TMP"; continue; fi
+
+	TMP=`echo "$var" | sed -n 's/^--with-fftw3=\(.*\)$/\1/p'`
+	if [ "$TMP" ]; then
+		FFTW3_INCDIR="${TMP}/include";
+		FFTW3_LIBDIR="${TMP}/lib";
+	continue; fi
+
+	TMP=`echo "$var" | sed -n 's/^--with-fftw3-incdir=\(.*\)$/\1/p'`
+	if [ "$TMP" ]; then FFTW3_INCDIR="$TMP"; continue; fi
+
+	TMP=`echo "$var" | sed -n 's/^--with-fftw3-libdir=\(.*\)$/\1/p'`
+	if [ "$TMP" ]; then FFTW3_LIBDIR="$TMP"; continue; fi
+
+	TMP=`echo "$var" | sed -n 's/^--with-libcurl=\(.*\)$/\1/p'`
+	if [ "$TMP" ]; then
+		LIBCURL_DIR="${TMP}";
+	continue; fi
+
+	TMP=`echo "$var" | sed -n 's/^--with-libcurl-incdir=\(.*\)$/\1/p'`
+	if [ "$TMP" ]; then LIBCURL_INCDIR="$TMP"; continue; fi
+
+	TMP=`echo "$var" | sed -n 's/^--with-libcurl-libdir=\(.*\)$/\1/p'`
+	if [ "$TMP" ]; then LIBCURL_LIBDIR="$TMP"; continue; fi
+
+	TMP=`echo "$var" | sed -n 's/^--with-python-bindings/true/p'`
+	if [ "$TMP" ]; then PYTHON_BINDINGS=true; continue; fi
+
+	TMP=`echo "$var" | sed -n 's/^--with-boost=\(.*\)$/\1/p'`
+	if [ "$TMP" ]; then
+		BOOST_INCDIR="${TMP}/include";
+		BOOST_LIBDIR="${TMP}/lib";
+	continue; fi
+
+	TMP=`echo "$var" | sed -n 's/^--with-boost-libdir=\(.*\)$/\1/p'`
+	if [ "$TMP" ]; then BOOST_LIBDIR="$TMP"; continue; fi
+	TMP=`echo "$var" | sed -n 's/^--with-boost-incdir=\(.*\)$/\1/p'`
+	if [ "$TMP" ]; then BOOST_INCDIR="$TMP"; continue; fi
+
+	TMP=`echo "$var" | sed -n 's/^--python-bin=\(.*\)$/\1/p'`
+	if [ "$TMP" ]; then PYTHON_EXE=$TMP; continue; fi
+	TMP=`echo "$var" | sed -n 's/^--python-module-dir=\(.*\)$/\1/p'`
+	if [ "$TMP" ]; then USER_PYTHON_MODULE_DIR="${TMP}"; continue; fi
+
+	echo "config.sh: Unknown or malformed option '$var'" 1>&2
+	exit 1
+done
+
+if [ "$FFTW3_INCDIR" -a "$FFTW3_LIBDIR" ]; then
+	echo "Checking manually specified fftw3..."
+	if [ -d "$FFTW3_INCDIR" \
+         -a -e "$FFTW3_INCDIR/fftw3.h" \
+         -a -d "$FFTW3_LIBDIR" \
+         -a -e "$FFTW3_LIBDIR/libfftw3.a" ]; then
+		FFTW3_FOUND=1
+		FFTW3_CFLAGS="-I$FFTW3_INCDIR"
+		FFTW3_LDFLAGS="-L$FFTW3_LIBDIR -lfftw3"
+	else
+		echo "Warning: manually specifed fftw3 not found; will attempt auto detection"
+	fi
+fi
+find_package fftw3
+
+if [ "$CFITSIO_INCDIR" -a "$CFITSIO_LIBDIR" ]; then
+	echo "Checking manually specified cfitsio..."
+	if [ -d "$CFITSIO_INCDIR" \
+         -a -e "$CFITSIO_INCDIR/fitsio.h" \
+         -a -d "$CFITSIO_LIBDIR" \
+         -a -e "$CFITSIO_LIBDIR/libcfitsio.a" ]; then
+		CFITSIO_FOUND=1
+		CFITSIO_CFLAGS="-I$CFITSIO_INCDIR"
+		CFITSIO_LDFLAGS="-L$CFITSIO_LIBDIR -lcfitsio"
+	else
+		echo "Warning: manually specifed cfitsio not found; will attempt auto detection"
+	fi
+fi
+find_package cfitsio
+
+if [ "$CAPNP_INCDIR" -a "$CAPNP_LIBDIR" ]; then
+	echo "Checking manually specified capnp..."
+	if [ -d "$CAPNP_INCDIR/capnp" \
+         -a -e "$CAPNP_INCDIR/capnp/common.h" \
+         -a -d "$CAPNP_INCDIR/kj" \
+         -a -e "$CAPNP_INCDIR/kj/common.h" \
+         -a -d "$CAPNP_LIBDIR" \
+         -a -e "$CAPNP_LIBDIR/libcapnp.a" \
+         -a -e "$CAPNP_LIBDIR/libkj.a" ]; then
+		CAPNP_FOUND=1
+		CAPNP_CFLAGS="-I$CAPNP_INCDIR"
+		CAPNP_LDFLAGS="-L$CAPNP_LIBDIR -lcfitsio"
+	else
+		echo "Warning: manually specifed capnp not found; will attempt auto detection"
+	fi
+fi
+try_find_capnp
+
+if [ "$LIBCURL_DIR" ]; then
+	echo "Checking manually specified libcurl..."
+	try_find_libcurl "$LIBCURL_DIR"
+	if [ ! "LIBCURL_FOUND" ]; then
+		echo "Warning: manually specifed libcurl not found; will attempt auto detection"
+	fi
+elif [ "$LIBCURL_INCDIR" -a "$LIBCURL_LIBDIR" ]; then
+	echo "Checking manually specified libcurl..."
+	try_find_libcurl "$LIBCURL_INCDIR" "$LIBCURL_LIBDIR"
+	if [ ! "LIBCURL_FOUND" ]; then
+		echo "Warning: manually specifed libcurl not found; will attempt auto detection"
+	fi
+fi
+
+find_libcurl
+
+if [ $PYTHON_BINDINGS ]; then
+	echo "Python bindings are not implemented at this time" 1>&2
+	exit 1
+
+	try_find_python
+	if [ "$PYTHON_FOUND" != 1 ]; then
+		echo "*** Failed to find python; python bindings will not be built ***"
+		unset PYTHON_BINDINGS
+	else
+		if [ "$USER_PYTHON_MODULE_DIR" ]; then
+			if [ "$USER_PYTHON_MODULE_DIR" == "site.USER_SITE" ]; then
+				PYTHON_MODULEDIR=`${PYTHON_EXE} -c 'import site; print(site.USER_SITE)'`
+			else
+				PYTHON_MODULEDIR="$USER_PYTHON_MODULE_DIR"
+			fi
+		fi
+	fi
+
+	if [ "$BOOST_INCDIR" -a "$BOOST_LIBDIR" ]; then
+		echo "Checking manually specified boost..."
+		try_find_boost "$BOOST_INCDIR" "$BOOST_LIBDIR"
+		if [ ! "$BOOST_FOUND" ]; then
+			echo "Warning: manually specifed boost not found; will attempt auto detection"
+		fi
+	fi
+	try_find_boost /usr
+	try_find_boost /usr/local
+	if [ "$BOOST_PYTHON_FOUND" != 1 ]; then
+		echo "*** Failed to find boost python; python bindings will not be built ***"
+		unset PYTHON_BINDINGS
+	fi
+	find_numpy
+	if [ "$NUMPY_FOUND" != 1 ]; then
+		echo "*** Failed to find numpy; python bindings will not be built ***"
+		unset PYTHON_BINDINGS
+	fi
+fi
+
+ensure_found fftw3
+ensure_found cfitsio
+ensure_found capnp
+ensure_found libcurl
+
+determine_cpu_feature_flags
+
+# Resolve PREFIX absolutely
+OLDPWD=`pwd`
+cd "$PREFIX"
+PREFIX=`pwd`
+cd "$OLDPWD"
+
+SOURCE_PATH=`pwd`
+
+if [ ! -d ./build/ ]; then
+    mkdir build;
+fi
+if [ ! -d ./lib/ ]; then
+    mkdir lib;
+fi
+
+echo "# Compiler
+CC=$CC
+CXX=$CXX
+AR=$AR
+LD=$LD
+CAPNP=$CAPNP_EXE
+
+DYN_SUFFIX=$DYN_SUFFIX
+DYN_OPT=$DYN_OPT
+DYN_OPT_PY=$DYN_OPT_PY
+
+VERSION=$VERSION
+PREFIX=$PREFIX
+INSTALL_LIBDIR:=$INSTALL_LIBDIR
+LIBDIR=lib
+
+CAPNP_CFLAGS=$CAPNP_CFLAGS
+CAPNP_LDFLAGS=$CAPNP_LDFLAGS
+
+CFITSIO_CFLAGS=$CFITSIO_CFLAGS
+CFITSIO_LDFLAGS=$CFITSIO_LDFLAGS
+
+FFTW3_CFLAGS=$FFTW3_CFLAGS
+FFTW3_LDFLAGS=$FFTW3_LDFLAGS
+
+LIBCURL_CFLAGS=$LIBCURL_CFLAGS
+LIBCURL_LDFLAGS=$LIBCURL_LDFLAGS
+
+VECTOR_FLAGS=$CPU_CFLAGS
+"> settings.mk
+
+if [ "$PYTHON_BINDINGS" ]; then
+	echo "
+PYTHON_CFLAGS=$PYTHON_CFLAGS
+PYTHON_LDFLAGS=$PYTHON_LDFLAGS
+BOOST_PYTHON_LDFLAGS=$BOOST_PYTHON_LDFLAGS
+PYTHON_MODULEDIR=$PYTHON_MODULEDIR
+NUMPY_CFLAGS=$NUMPY_CFLAGS
+">> settings.mk
+fi
+
+echo "
+CXXFLAGS:=$CXXFLAGS "'-std=c++17 -O3 -fPIC $(VECTOR_FLAGS) $(CAPNP_CFLAGS) $(CFITSIO_CFLAGS) $(FFTW3_CFLAGS) $(LIBCURL_CFLAGS)'"
+LDFLAGS:=$LDFLAGS "'-Wl,-rpath -Wl,$(LIBDIR) -L$(LIBDIR) $(CAPNP_LDFLAGS) $(CFITSIO_LDFLAGS) $(FFTW3_LDFLAGS) $(LIBCURL_LDFLAGS)'"
+
+DYN_SUFFIX:=$DYN_SUFFIX
+DYN_OPT=$DYN_OPT
+">> settings.mk
+
+echo "Done."
+echo "To build, run 'make'"
