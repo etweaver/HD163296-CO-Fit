@@ -1253,7 +1253,7 @@ struct beam{
 		double degperpixv = (atan(height/(distance))/vpix)* (180/pi);
 		double majorAxis=bmaj/3600/degperpixh;
 		double minorAxis=bmin/3600/degperpixh;
-		std::cout << majorAxis << "\t" << minorAxis << std::endl;
+		//std::cout << majorAxis << "\t" << minorAxis << std::endl;
 		
 		//now we need to construct the image plane beam and its FFTs
 		for(int i=0;i<hpix;i++){
